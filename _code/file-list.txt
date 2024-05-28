@@ -1,5 +1,5 @@
 atm_analysis.py : script to analyze and plot CESM2 atmosphere (cam) output in _data/. Produces Fig. 2, ED1, ED2, ED3, ED4.
-enso_impacts.py : script to define El Niño impact regions and and calculate MCB response to each impact region. Produces Fig. 4, ED6.
+enso_impacts.py : script to define El Niño impact regions and and calculate MCB response to each impact region. Produces Fig. 4, ED6, ED7.
 enso_mechanisms.py : script to calculate El Niño growth and decay metrics. Produces Fig. 3, ED5.
 function_dependencies.py : stores functions used in all analysis scripts in _code/ 
 smyle_aus_mcb.py : script to analyze and compare SMYLE-MCB La Niña experiment to SMYLE-AUFIRE experiment. Produces Fig. 1.
