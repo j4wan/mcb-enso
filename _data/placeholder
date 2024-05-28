@@ -1,5 +1,5 @@
 Placeholder file:
-You will need to populate _data with associated data files available from NCAR’s campaign storage system (accessible from Casper).
+You will need to populate _data/ with associated data files available from NCAR’s campaign storage system (accessible from Casper).
 MCB experiments:
 /glade/campaign/cesm/development/espwg/SMYLE-MCB/timeseries
 SMYLE-AUFIRE experiments:
