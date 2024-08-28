@@ -6,3 +6,7 @@ SMYLE-AUFIRE experiments:
 /glade/campaign/cesm/development/espwg/SMYLE-AUFIRE/archive
 SMYLE control and historical experiments:
 /glade/campaign/cesm/development/espwg/SMYLE/archive
+
+Contents:
+BenefitEstimateENSOMCB_codeavailability.xlsx : C&M replication analysis (see README in file for more details)
+sesp_mask_CESM2_0.9x1.25_v3.nc : example MCB seeding mask.
