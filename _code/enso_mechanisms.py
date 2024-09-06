@@ -1,6 +1,7 @@
 ### PURPOSE: Script to calculate ENSO metrics (SOI, Walker cell, thermocline, wind stress)
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 05/28/2024
+### LAST MODIFIED: 09/06/2024
 
 ### NOTES: adapted from enso_metrics_v1.py
 
@@ -36,9 +37,10 @@ import itertools
 import mpl_toolkits.mplot3d
 from matplotlib.collections import PolyCollection, LineCollection
 
-plt.ion();
+plt.ion(); #uncomment for interactive plotting
 
 dask.config.set({"array.slicing.split_large_chunks": False})
+
 
 ##################################################################################################################
 ## THIS SCRIPT READS IN ONE ENSEMBLE OF EXPERIMENTS AT A TIME. ##
@@ -46,22 +48,25 @@ dask.config.set({"array.slicing.split_large_chunks": False})
 month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
 year_init = input('Which initialization year are you reading in (1997, 2015, 2019?): ')
 sensitivity_opt = input('Sensitivity run (y or n)?: ') # y for 05-1997 and 05-2015 only, else n
+mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
+## UNCOMMENT THESE OPTIONS FOR DEMO ##
+month_init = '05'
+year_init = '2015'
+sensitivity_opt = 'y'
+mcb_keys = ['06-02']
 ##################################################################################################################
 
 ## READ IN DATA
 # Get list of control ensemble members
 if year_init=='1997':
     yr_init = ['1996','1997']
-    enso_phase = ['nino']
 elif year_init=='2015':
     yr_init = ['2014','2015']
-    enso_phase = ['nino']
 elif year_init=='2019':
     yr_init = ['2019','2020']
-    enso_phase = ['nina']
 ctrl_files = []
 for yr in yr_init:
-    ctrl_files = ctrl_files + glob.glob('/_data/SMYLE-MCB/realtime/b.e21.BSMYLE.f09_g17.'+yr+'*-'+month_init+'.*')
+    ctrl_files = ctrl_files + glob.glob('/_data/realtime/b.e21.BSMYLE.f09_g17.'+yr+'*-'+month_init+'.*')
 ctrl_members = []
 for i in ctrl_files:
     start = i.find('f09_g17.') + len('f09_g17.')
@@ -74,11 +79,10 @@ print(ctrl_members)
 # Get list of MCB ensemble members
 mcb_sims = {}
 if sensitivity_opt=='y':
-    mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
     for key in mcb_keys:
         for yr in yr_init:
             mcb_files = []
-            mcb_files = mcb_files + glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB*'+yr+'*-'+month_init+'_'+key+'.*')
+            mcb_files = mcb_files + glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB*'+yr+'*-'+month_init+'_'+key+'.*')
         mcb_members = []
         for i in mcb_files:
             start = i.find('f09_g17.MCB') + len('f09_g17.MCB.')
@@ -93,7 +97,7 @@ elif sensitivity_opt=='n':
     for key in mcb_keys:
         mcb_files = []
         for yr in yr_init:    
-            mcb_files = mcb_files + glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB.'+yr+'*-'+month_init+'.*')
+            mcb_files = mcb_files + glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB.'+yr+'*-'+month_init+'.*')
         mcb_members = []
         for i in mcb_files:
             start = i.find('f09_g17.MCB') + len('f09_g17.MCB.')
@@ -106,7 +110,7 @@ elif sensitivity_opt=='n':
 
 
 # Get list of control climatology ensemble members
-clim_files =  glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
+clim_files =  glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
 clim_members = []
 for i in clim_files:
     start = i.find('f09_g17.1970-'+month_init+'.') + len('f09_g17.1970-'+month_init+'.')
@@ -118,14 +122,11 @@ print(clim_members)
 
 
 # # Get interesction of control and MCB ensemble members so we only keep members that are in both
-# intersect_members = sorted(list(set(ctrl_members).intersection(mcb_members)))
 intersect_members = ctrl_members[0:len(mcb_members)]
-
 
 # Create variable subset list
 atm_varnames_monthly_subset = ['LANDFRAC','TS','PRECT','PS','U','V']
 ocn_varnames_monthly_subset = ['TEMP','TAUX']
-
 
 # Conversion constants
 # PRECT
@@ -133,113 +134,21 @@ m_to_mm = 1e3 #mm/m
 s_to_days = 86400 #s/day
 
 
-## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS AND COMPUTE CLIMATOLOGY
-# Read in each ensemble member as a continuous time series by taking mean of overlapping periods
-# ATM
-target_dir='/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed'
-if not os.path.exists(target_dir):
-    os.makedirs(target_dir)
-if len(os.listdir(target_dir))>0:
-    # overwrite_opt = input('Overwrite existing file (y or n)?: ')
-    overwrite_opt='n'
-elif len(os.listdir(target_dir))==0:
-    overwrite_opt='y'
-if overwrite_opt=='y':
-    atm_monthly_ctrl_clim = {}
-    for m in clim_members:
-        print(m)
-        combined_vars=xr.Dataset()
-        for var in atm_varnames_monthly_subset:
-            file_subset_clim =  sorted(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/'+var+'/b.e21.BSMYLE.f09_g17.*'+m+'.cam*'))
-            for file in file_subset_clim:
-                if file_subset_clim.index(file)==0:
-                    da_merged = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                else:
-                    next_file = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                    overlap_time=xr.merge([da_merged,next_file],compat='override',join='inner').time
-                    da_merge_intersect = da_merged.where(da_merged.time==overlap_time)
-                    next_file_intersect = next_file.where(next_file.time==overlap_time)
-                    da_merged = xr.merge([da_merged,next_file],compat='override',join='outer')
-                    da_merged.loc[{'time':[t for t in overlap_time.values]}] = (da_merge_intersect+next_file_intersect)/2
-                    da_merged.loc[{'time':[t for t in da_merged.time.values if t>overlap_time.values[-1]]}] = next_file.loc[{'time':[t for t in next_file.time.values if t>overlap_time.values[-1]]}]
-            combined_vars=xr.merge([combined_vars,da_merged])
-        atm_monthly_ctrl_clim[m] = combined_vars
-    # Combine all files into one xarray dataset with ensemble members as a new dimension
-    atm_monthly_ctrl_clim_xr = xr.concat(list(map(atm_monthly_ctrl_clim.get, clim_members)),pd.Index(clim_members,name='member'))
-    ## Convert time to datetime index
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign_coords(time=atm_monthly_ctrl_clim_xr.indexes['time'].to_datetimeindex())
-    ## Convert units
-    # PRECT
-    m_to_mm = 1e3 #mm/m
-    s_to_days = 86400 #s/day
-    # Convert from m/s to mm/day
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign(PRECT=atm_monthly_ctrl_clim_xr['PRECT']*m_to_mm*s_to_days)
-    atm_monthly_ctrl_clim_xr['PRECT'].attrs['units'] = 'mm/day'
-    # TS
-    # Convert from K to C
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign(TS=atm_monthly_ctrl_clim_xr['TS']-273.15)
-    atm_monthly_ctrl_clim_xr['TS'].attrs['units'] = '°C'
-    ### EXPORT PROCESSED NETCDF
-    atm_monthly_ctrl_clim_xr.to_netcdf(target_dir+'/BSMYLE.'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values[0]).year)+'-'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values[-1]).year)+'-'+month_init+'.atm_tseries_combined.nc',mode='w',format='NETCDF4')
-elif overwrite_opt=='n':
-    atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_tseries_combined.nc')[0])))
+## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
+atm_monthly_ctrl_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_clim_concat.nc')[0]))
 
-# Compute climatogical mean from 1970-2014
-tslice = atm_monthly_ctrl_clim_xr.TS.loc[{'time':[t for t in pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values) if (t.year<2015)]}]
-pslice = atm_monthly_ctrl_clim_xr.PS.loc[{'time':[t for t in pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values) if (t.year<2015)]}]
-# ts_clim_ensemble_mean = tslice.mean(dim=('member','time')) # By annual climatology
-ts_clim_ensemble_mean = tslice.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
-ps_clim_ensemble_mean = pslice.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
+# Compute ensemble climatogical mean from 1970-2014
+ts_clim_ensemble_mean = atm_monthly_ctrl_clim_xr.TS.mean(dim=('member'))
+ps_clim_ensemble_mean = atm_monthly_ctrl_clim_xr.PS.mean(dim=('member'))
 
 
 # OCN
-data_dir = '/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/ocn_tseries/TEMP/regrid/'
+data_dir = '/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/ocn_tseries/TEMP/regrid/'
 target_dir = os.path.join(data_dir,'processed')
 
-if not os.path.exists(target_dir):
-    os.makedirs(target_dir)
-if len(os.listdir(data_dir+'/processed/'))<=0:
-    ocn_monthly_ctrl_clim = {}
-    for m in clim_members:
-        print(m)
-        combined_vars=xr.Dataset()
-        file_subset_clim =  sorted(glob.glob(data_dir+'/r288x192.b.e21.BSMYLE.f09_g17.*'+m+'.pop*'))
-        for file in file_subset_clim:
-            print(file)
-            if file_subset_clim.index(file)==0:
-                da_merged = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_mfdataset(file)))['TEMP']
-            else:
-                next_file = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_mfdataset(file)))['TEMP']
-                overlap_time=xr.merge([da_merged,next_file],compat='override',join='inner').time
-                da_merge_intersect = da_merged.where(da_merged.time==overlap_time)
-                next_file_intersect = next_file.where(next_file.time==overlap_time)
-                da_merged = xr.merge([da_merged,next_file],compat='override',join='outer')
-                da_merged.loc[{'time':[t for t in overlap_time.values]}] = (da_merge_intersect+next_file_intersect)/2
-                da_merged.loc[{'time':[t for t in da_merged.time.values if t>overlap_time.values[-1]]}] = next_file.loc[{'time':[t for t in next_file.time.values if t>overlap_time.values[-1]]}]
-        combined_vars=xr.merge([combined_vars,da_merged])
-        ocn_monthly_ctrl_clim[m] = combined_vars
-    # Combine all files into one xarray dataset with ensemble members as a new dimension
-    ocn_monthly_ctrl_clim_xr = xr.concat(list(map(ocn_monthly_ctrl_clim.get, clim_members)),pd.Index(clim_members,name='member'))
-    ## Convert time to datetime index
-    ocn_monthly_ctrl_clim_xr = ocn_monthly_ctrl_clim_xr.assign_coords(time=ocn_monthly_ctrl_clim_xr.indexes['time'].to_datetimeindex())
-    # Convert depth from cm to m
-    ocn_monthly_ctrl_clim_xr['z_t'] = ocn_monthly_ctrl_clim_xr['z_t']/100
-    ocn_monthly_ctrl_clim_xr['z_t'].attrs['units'] = 'm'
-    # Compute climatogical mean from 1970-2014
-    ocn_monthly_ctrl_clim_xr = ocn_monthly_ctrl_clim_xr.loc[{'time':[t for t in pd.to_datetime(ocn_monthly_ctrl_clim_xr.time.values) if (t.year<2015)]}]
-    # Take average over all ensemble members to save space
-    ocn_monthly_ctrl_clim_xr = ocn_monthly_ctrl_clim_xr.mean(dim='member')
-    # Save ensemble mean climatology as xarray
-    ocn_monthly_ctrl_clim_xr.to_netcdf(path=target_dir+'/r288x192.b.e21.BSMYLE.f09_g17.1970-2021.nc',mode='w',format='NETCDF4')
-
-
-#%% CHECKPOINT
 # Read in ensemble and time averaged data
-ocn_monthly_ctrl_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob(target_dir+'/r288x192*.nc')[0]))['TEMP']
-# # Compute climatogical mean from 1970-2014
-# tslice = ocn_monthly_ctrl_clim_xr.TEMP.loc[{'time':[t for t in pd.to_datetime(ocn_monthly_ctrl_clim_xr.time.values) if (t.year<2015)]}]
-# temp_clim_ensemble_mean = fun.weighted_temporal_mean(tslice.mean(dim=('member'))).mean(dim='time') # By annual climatology
-temp_clim_ensemble_mean = ocn_monthly_ctrl_clim_xr.groupby('time.month').mean() # By monthly climatology
+ocn_monthly_ctrl_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob(target_dir+'/r288x192*_v2.nc')[0]))['TEMP']
+temp_clim_ensemble_mean = ocn_monthly_ctrl_clim_xr.mean(dim='member')
 
 
 ## READ IN CONTROL SIMULATION & PRE-PROCESS
@@ -254,7 +163,7 @@ for key in ctrl_keys:
     atm_monthly_ctrl_single_mem = {}
     for m in intersect_members:
         print(m)
-        dir_ctrl = '/_data/SMYLE-MCB/realtime/b.e21.BSMYLE.f09_g17.'+m+'/atm/proc/tseries/month_1'
+        dir_ctrl = '/_data/realtime/b.e21.BSMYLE.f09_g17.'+m+'/atm/proc/tseries/month_1'
         file_subset_ctrl = []
         for var in atm_varnames_monthly_subset:
             pattern = "."+var+"."
@@ -276,9 +185,6 @@ for key in ctrl_keys:
     atm_monthly_ctrl[key] = atm_monthly_ctrl[key].assign(TS=atm_monthly_ctrl[key]['TS']-273.15)
     atm_monthly_ctrl[key]['TS'].attrs['units'] = '°C'
     ##DRIFT CORRECTION
-    # Compute drift correction anomaly
-    # By annual climatology
-    # ts_ctrl_anom[key]=atm_monthly_ctrl[key]['TS']-ts_clim_ensemble_mean
     # By month climatology
     i_month=np.arange(1,13,1)
     ts_ctrl_anom[key] = atm_monthly_ctrl[key]['TS']*1
@@ -303,32 +209,9 @@ ctrl_keys=['']
 
 for key in ctrl_keys:
     ocn_monthly_ctrl_single_mem = {}
-    for m in intersect_members:
-        print(m)
-        dir_ctrl = '/_data/SMYLE-MCB/realtime/b.e21.BSMYLE.f09_g17.'+m+'/ocn/proc/tseries/month_1/regrid'
-        file_subset_ctrl = []
-        for var in ocn_varnames_monthly_subset:
-            pattern = "."+var+"."
-            var_file_ctrl = [f for f in os.listdir(dir_ctrl) if pattern in f]
-            file_subset_ctrl.append(dir_ctrl+'/'+var_file_ctrl[0])
-        ocn_monthly_ctrl_single_mem[m] = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_mfdataset(file_subset_ctrl)))
-    # Combine all files into one xarray dataset with ensemble members as a new dimension
-    ocn_monthly_ctrl[key] = xr.concat(list(map(ocn_monthly_ctrl_single_mem.get, intersect_members)),pd.Index(intersect_members,name='member'))
-    # Convert time to datetime index
-    ocn_monthly_ctrl[key] = ocn_monthly_ctrl[key].assign_coords(time=ocn_monthly_ctrl[key].indexes['time'].to_datetimeindex())
-    ## Export ensemble concatenated xarray
     # Experiment number
     exp_num = intersect_members[0][:-4]
-    path = os.path.join('/_data/SMYLE-MCB/realtime/ocn_processed', exp_num)
-    if not os.path.exists(path):
-        os.makedirs(path)
-        ocn_monthly_ctrl[key].to_netcdf(path=path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+intersect_members[0][-3:]+'-'+intersect_members[-1][-3:]+'.nc',mode='w',format='NETCDF4')
-    elif os.path.exists(path):
-        # write_opt = input('File already exists. Overwrite (y or n)?: ')
-        write_opt = 'n'
-        if write_opt == 'y':
-            ocn_monthly_ctrl[key].to_netcdf(path=path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+intersect_members[0][-3:]+'-'+intersect_members[-1][-3:]+'.nc',mode='w',format='NETCDF4')
-    #%% CHECKPOINT
+    path = os.path.join('/_data/realtime/ocn_processed', exp_num)
     # Read in ensemble and time averaged data
     ocn_monthly_ctrl[key] = fun.reorient_netCDF(xr.open_dataset(path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+intersect_members[0][-3:]+'-'+intersect_members[-1][-3:]+'.nc'))
     # Unit correction
@@ -339,9 +222,6 @@ for key in ctrl_keys:
     ocn_monthly_ctrl[key]['TAUX'] = ocn_monthly_ctrl[key]['TAUX']*(100**2)
     ocn_monthly_ctrl[key]['TAUX'].attrs['units'] = 'Pa'
     ##DRIFT CORRECTION
-    # Compute drift correction anomaly
-    # By annual climatology
-    # temp_ctrl_anom[key]=ocn_monthly_ctrl[key]['TEMP']-ocn_monthly_ctrl_clim_xr
     # By month climatology
     i_month=np.arange(1,13,1)
     temp_ctrl_anom[key] = ocn_monthly_ctrl[key]['TEMP']*1
@@ -366,7 +246,7 @@ for key in mcb_keys:
     atm_monthly_mcb_single_mem = {}
     for m in mcb_sims[key]:
         print(m)
-        dir_mcb = glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB*'+m+'/atm/proc/tseries/month_1')[0]
+        dir_mcb = glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB*'+m+'/atm/proc/tseries/month_1')[0]
         file_subset_ctrl = []
         file_subset_mcb = []
         for var in atm_varnames_monthly_subset:
@@ -391,9 +271,6 @@ for key in mcb_keys:
     atm_monthly_mcb[key] = atm_monthly_mcb[key].assign(TS=atm_monthly_mcb[key]['TS']-273.15)
     atm_monthly_mcb[key]['TS'].attrs['units'] = '°C'
     ##DRIFT CORRECTION
-    # Compute drift correction anomaly
-    # By annual climatology
-    # ts_mcb_anom[key]=atm_monthly_mcb[key]['TS']-ts_clim_ensemble_mean
     # By month climatology
     i_month=np.arange(1,13,1)
     ts_mcb_anom[key] = atm_monthly_mcb[key]['TS']*1
@@ -416,35 +293,9 @@ temp_mcb_anom_std={}
 temp_mcb_anom_sem={}
 for key in mcb_keys:
     ocn_monthly_mcb_single_mem = {}
-    for m in mcb_sims[key]:
-        print(m)
-        dir_mcb = glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB*'+m+'/ocn/proc/tseries/month_1/regrid')[0]
-        file_subset_ctrl = []
-        file_subset_mcb = []
-        for var in ocn_varnames_monthly_subset:
-            pattern = "."+var+"."
-            var_file_mcb = [f for f in os.listdir(dir_mcb) if pattern in f]
-            file_subset_mcb.append(dir_mcb+'/'+var_file_mcb[0])
-        ocn_monthly_mcb_single_mem[m] = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_mfdataset(file_subset_mcb)))
-    # Combine all files into one xarray dataset with ensemble members as a new dimension
-    ocn_monthly_mcb[key] = xr.concat(list(map(ocn_monthly_mcb_single_mem.get, mcb_sims[key])),pd.Index(intersect_members,name='member'))
-    # Convert time to datetime index
-    ocn_monthly_mcb[key] = ocn_monthly_mcb[key].assign_coords(time=ocn_monthly_mcb[key].indexes['time'].to_datetimeindex())
-    # Overwrite lat, lon to match control to fix rounding errors
-    ocn_monthly_mcb[key] = ocn_monthly_mcb[key].assign_coords(lat= ocn_monthly_ctrl[ctrl_keys[0]].lat, lon= ocn_monthly_ctrl[ctrl_keys[0]].lon)
-    ## Export ensemble concatenated xarray
     # Experiment number
     exp_num = mcb_sims[key][0][:-4]
-    path = os.path.join('/_data/SMYLE-MCB/MCB/ocn_processed', exp_num)
-    if not os.path.exists(path):
-        os.makedirs(path)
-        ocn_monthly_mcb[key].to_netcdf(path=path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+mcb_sims[key][0][-3:]+'-'+mcb_sims[key][-1][-3:]+'.nc',mode='w',format='NETCDF4')
-    elif os.path.exists(path):
-        # write_opt = input('File already exists. Overwrite (y or n)?: ')
-        write_opt = 'n'
-        if write_opt == 'y':
-            ocn_monthly_mcb[key].to_netcdf(path=path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+mcb_sims[key][0][-3:]+'-'+mcb_sims[key][-1][-3:]+'.nc',mode='w',format='NETCDF4')
-    #%% CHECKPOINT
+    path = os.path.join('/_data/MCB/ocn_processed', exp_num)
     # Read in ensemble and time averaged data
     ocn_monthly_mcb[key] = fun.reorient_netCDF(xr.open_dataset(path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+mcb_sims[key][0][-3:]+'-'+mcb_sims[key][-1][-3:]+'.nc'))
     # Unit correction
@@ -455,9 +306,6 @@ for key in mcb_keys:
     ocn_monthly_mcb[key]['TAUX'] = ocn_monthly_mcb[key]['TAUX']*(100**2)
     ocn_monthly_mcb[key]['TAUX'].attrs['units'] = 'Pa'
     ##DRIFT CORRECTION
-    # Compute drift correction anomaly
-    # By annual climatology
-    # temp_mcb_anom[key]=ocn_monthly_mcb[key]['TEMP']-ocn_monthly_ctrl_clim_xr
     # By month climatology
     i_month=np.arange(1,13,1)
     temp_mcb_anom[key] = ocn_monthly_mcb[key]['TEMP']*1
@@ -508,7 +356,7 @@ for key in mcb_keys:
         ocn_monthly_ensemble_anom[key][varname].attrs['units'] = ocn_monthly_ctrl[ctrl_keys[0]][varname].units
 
 
-#%% DEFINE MASKS
+## RETRIEVE AND GENERATE ANALYSIS AREA MASKS
 # Get overlay mask files (area is the same for all of them so can just pick one)
 seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/sesp_mask_CESM2_0.9x1.25_v3.nc'))
 
@@ -704,8 +552,7 @@ soi_djf_mcb={}
 for key in mcb_keys:
     soi_mcb[key]= calc_soi(ps_mcb_anom[key])
     if month_init=='05':
-        soi_djf_mcb[key] = round(float((soi_mcb[key].isel(time=slice(7,10))).mean(dim='time').values),2)
-
+        soi_djf_mcb[key] = round(float((soi_mcb[key].isel(time=slice(7,10))).mean(dim='time').values),3)
 
 #%% CALCULATE WALKER CIRCULATION STRENGTH INDEX
 # Control - Climatology
@@ -724,7 +571,6 @@ for key in mcb_keys:
     walker_index_anom[key] = (cepac_mcb-iowpac_mcb).mean(dim='member') 
     if month_init=='05':
         walker_index_djf_anom[key] = round(float((walker_index_anom[key].isel(time=slice(7,10))).mean(dim='time').values),2)
-
 
 #%% CALCULATE THERMOCLINE SLOPE INDEX
 # Set depth interpolation level to 500 m
@@ -783,7 +629,7 @@ for key in mcb_keys:
     z20_anom_df = pd.concat([z20_anom_df, z20_anom_tseries_single_df]).reset_index(drop=True)
 
 # Get DJF mean Z20
-z20_anom_df[(z20_anom_df['time']=='2015-12-16') |(z20_anom_df['time']=='2016-01-16') | (z20_anom_df['time']=='2016-02-13')].groupby(['experiment']).mean()
+z20_djf_anom_df = (z20_anom_df[(z20_anom_df['time']=='2015-12-16') |(z20_anom_df['time']=='2016-01-16') | (z20_anom_df['time']=='2016-02-13')].groupby(['experiment']).mean()).reset_index()
 
 
 #%% CALCULATE EQUATORIAL WIND STRESS ANOMALIES
@@ -795,11 +641,16 @@ for key in mcb_keys:
 #%% CALCULATE MEAN SURFACE TEMPERATURE IN SESP AND NIÑO3.4 BOX
 sesp_ts_mcb = {}
 nino34_ts_mcb = {}
+nino34_djf_anom_ts_mcb = {}
 for key in mcb_keys:
     sesp_ts_mcb[key] = fun.calc_weighted_mean_tseries(atm_monthly_mcb[key].TS.mean(dim='member').where(seeding_mask_seed>0,drop=True))
     nino34_ts_mcb[key] = fun.calc_weighted_mean_tseries(atm_monthly_mcb[key].TS.mean(dim='member').where(nino34_mask>0,drop=True))
+    if month_init=='05':
+        nino34_djf_anom_ts_mcb[key] = fun.calc_weighted_mean_tseries(ts_mcb_anom[key].isel(time=slice(7,10)).mean(dim=('time','member')).where(nino34_mask>0,drop=True))
 sesp_ts_ctrl = fun.calc_weighted_mean_tseries(atm_monthly_ctrl[''].TS.mean(dim='member').where(seeding_mask_seed>0,drop=True))
 nino34_ts_ctrl = fun.calc_weighted_mean_tseries(atm_monthly_ctrl[''].TS.mean(dim='member').where(nino34_mask>0,drop=True))
+if month_init=='05':
+    nino34_djf_anom_ts_ctrl = fun.calc_weighted_mean_tseries(ts_ctrl_anom[''].isel(time=slice(7,10)).mean(dim=('time','member')).where(nino34_mask>0,drop=True))
 # Calc SEM
 sesp_ts_ctrl_sem = fun.calc_weighted_mean_tseries(2*(atm_monthly_ctrl[''].TS).std(dim='member').where(seeding_mask_seed>0,drop=True)/np.sqrt(len(ts_ctrl_anom[''].member)))
 sesp_ts_ctrl_lower_plot = sesp_ts_ctrl-sesp_ts_ctrl_sem
@@ -809,7 +660,6 @@ nino34_ts_ctrl_lower_plot = nino34_ts_ctrl-nino34_ts_ctrl_sem
 nino34_ts_ctrl_upper_plot = nino34_ts_ctrl+nino34_ts_ctrl_sem
 
 
-## FIG ED5 (05-2015)
 # Plot time series
 mcb_colors = {'':'#a50f15','06-02':'#a50f15','06-08':'#a50f15','06-11':'#a50f15','09-02':'#ef3b2c','09-11':'#ef3b2c','12-02':'#fc9272'} # reds=start month
 mcb_linestyle = {'':'solid','06-02':'solid','06-08':(0, (1, 1)),'06-11':'dashed','09-02':'dashed','09-11':(0, (1, 1)),'12-02':(0, (1, 1))} # linestyle=duration
@@ -819,10 +669,8 @@ mcb_on_end_dict = {'06-02':10,'06-08':4,'06-11':7,'09-02':10,'09-11':7,'12-02':1
 
 fig = plt.figure(figsize=(6,8),layout='constrained')
 spec = fig.add_gridspec(5,1)
-
 ## WALKER CELL STRENGTH
 ax0 = fig.add_subplot(spec[0:2, 0])
-# MCB
 # Control
 # PLOT 2 STANDARD ERRORS
 plt.fill_between(walker_index_ctrl.time, walker_index_ctrl_lower_plot, walker_index_ctrl_upper_plot,color='k', alpha=0.2)
@@ -850,7 +698,6 @@ plt.title('a', fontsize=14, fontweight='bold',loc='left');
 
 ## THERMOCLINE SLOPE
 ax1 = fig.add_subplot(spec[2:4, 0])
-# plt.subplot(2,2,2);
 # Control
 # PLOT 2 STANDARD ERRORS
 plt.fill_between(z20_ctrl_anom_lower_plot.time, z20_ctrl_anom_lower_plot, z20_ctrl_anom_upper_plot,color='k', alpha=0.2)
@@ -901,13 +748,13 @@ for key in mcb_keys:
         plt.annotate(mcb_legend_longname[key],xy=(datetime.datetime(2016, 12, 15) ,mcb_legend_y[key]-.2),color=mcb_colors[key],fontsize=12)
     elif year_init=='1997':
         plt.annotate(mcb_legend_longname[key],xy=(datetime.datetime(1998, 12, 15) ,mcb_legend_y[key]-.2),color=mcb_colors[key],fontsize=12)
-plt.ylabel('MCB scenario', fontsize=12);
+plt.ylabel('MCB strategy', fontsize=12);
 ax4.set_xticks([]);ax4.set_yticks([]);
 plt.setp(ax4.spines.values(), color=None);
 
 
 
-### FIG 3: SLP, SST, Z20 PLOTS
+#%%  3 PANEL FIG 3: SLP, SST, Z20 PLOTS
 ## DJF SLP bar graph
 # Subset raw SLP for each region for Walker index
 # CLIMATOLOGY
@@ -933,6 +780,8 @@ x = np.arange(len(regions))  # the label locations
 width = 0.1  # the width of the bars
 multiplier = 0
 cmap = {'Reference':'lightgray','El Niño':'#f4a582','Full effort MCB':'#92c5de'}
+# cmap = {'Reference':'lightgray','El Niño':'#f4a582','Full effort MCB':'white'}
+
 fig, ax = plt.subplots(figsize=(10,3),layout='constrained')
 for attribute, measurement in slp_values.items():
     offset = width * multiplier
@@ -968,6 +817,7 @@ ts_control_plot = xr.where(landmask<0.1,ts_control_plot,np.nan )
 t1 = ts_mcb_anom['06-02'].mean(dim='member').isel(time=slice(4,16))
 ts_fullmcb_plot = fun.weighted_temporal_mean_clim(t1.loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].groupby('time.month').mean())
 ts_fullmcb_plot = xr.where(landmask<0.1,ts_fullmcb_plot,np.nan )
+
 ## CREATE 3D map
 # Remove white line for plotting over Pacific Ocean.
 plot_proj = ccrs.PlateCarree(central_longitude=180)
@@ -990,7 +840,7 @@ cepac_plot_reorient = fun.reorient_netCDF(cepac_mask,target=360)
 cepac_plot_reorient=cepac_plot_reorient.where((cepac_plot_reorient.lat<=25)&(cepac_plot_reorient.lat>=-25)&(cepac_plot_reorient.lon<=285)&(cepac_plot_reorient.lon>=75),drop=True)
 
 
-### Create SST map
+# Create figure
 fig = plt.figure(figsize=(10,10))
 ax3d = fig.add_axes([0, 0, 1, 1], projection='3d')
 # Make an axes that we can use for mapping the data in 2d.
@@ -1019,7 +869,6 @@ fun.add_contour3d(ax3d, cs5)
 clip_geom = proj_ax._get_extent_geom().buffer(0)
 # Add land features to the bottom z level
 zbase = 0
-# add_feature3d(ax3d, cartopy.feature.OCEAN, clip_geom, zs=zbase)
 fun.add_feature3d(ax3d, cartopy.feature.LAND,clip_geom=clip_geom, zs=zbase)
 
 # Change axis limits
@@ -1079,3 +928,14 @@ ax.set_xticks([90,120,150,180,210,240,270]);
 ax.set_xticklabels(['90°E','120°E','150°E','180°E', '150°W', '120°W','90°W']);
 ax.tick_params(labelsize=12);
 ax.set_xlabel('Longitude (degrees)',fontsize=14);
+
+
+# Create ED table of ENSO indicators
+columns=['MCB_strategy','Niño3.4_SST','SOI','Walker_strength_index','Thermocline_slope_index']
+mcb_exp_reordered = ['06-02','06-11','06-08','09-02','09-11','12-02']
+enso_indicator_df = pd.DataFrame(columns=columns)
+for key in mcb_exp_reordered:
+    nino34_djf_anom = float(nino34_djf_anom_ts_mcb[key]-nino34_djf_anom_ts_ctrl)
+    df_append = pd.DataFrame([[key, round(nino34_djf_anom,3),round(soi_djf_mcb[key],3),round(walker_index_djf_anom[key],3), round(float(z20_djf_anom_df[z20_djf_anom_df['experiment']==key]['TEMP'].values),3)]],columns=columns)
+    enso_indicator_df = pd.concat([enso_indicator_df,df_append])
+enso_indicator_df = enso_indicator_df

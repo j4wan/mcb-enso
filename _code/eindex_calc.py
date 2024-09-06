@@ -1,6 +1,8 @@
 ### PURPOSE: Script to calculate E/C indices from surface temperature EOFs
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 08/27/2024
+### LAST MODIFIED: 09/06/2024
+
 ### Note: script adapted from smyle_fosi_eindex_v3.py
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
@@ -15,7 +17,7 @@ from importlib import reload #to use type reload(fun)
 import matplotlib.patches as mpatches
 from scipy import signal
 from scipy import stats
-import lens2_preanalysis_functions as fun
+import function_dependencies as fun
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from cartopy.util import add_cyclic_point
 import cartopy.feature as cfeature
@@ -39,15 +41,15 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 ##################################################################################################################
 ## WHICH EXPERIMENT ARE YOU READING IN? ##
-# month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
-year_init = input('Which initialization year are you reading in (1997, 2015?): ')
-# enso_phase = input('Which ENSO event are you reading in (nino or nina)?: ')
-# sensitivity_opt = input('Sensitivity run (y or n)?: ')
-# Hard code for 2015 testing
+month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
+year_init = input('Which initialization year are you reading in (1997, 2015, 2019?): ')
+sensitivity_opt = input('Sensitivity run (y or n)?: ') # y for 05-1997 and 05-2015 only, else n
+mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
+## UNCOMMENT THESE OPTIONS FOR DEMO ##
 month_init = '05'
-# year_init = '2015'
-enso_phase = 'nino'
+year_init = '2015'
 sensitivity_opt = 'y'
+mcb_keys = ['06-02']
 ##################################################################################################################
 ## DEFINE FUNCTIONS FOR ANALYSIS ##
 # 1) djf_mean_annual: calculate DJF means for each year (D is defined in year t-1 and JF in year t)
@@ -61,7 +63,6 @@ def djf_mean_annual(data):
     # Reassign time such that D is defined in year t-1 and JF in year t
     djf_xr = djf_xr.assign_coords(time=pd.to_datetime(djf_xr.time).year+1)
     return djf_xr
-
 
 ## 2) xarray_linear_detrend: detrend xarray along time dimension
 # # Adapted from Callahan & Mankin (2023) Observed_ENSO_Indices.ipynb and CMIP6_ENSO_Indices
@@ -174,7 +175,7 @@ s_to_days = 86400 #s/day
 
 
 ## READ IN CONTROL SMYLE-FOSI HISTORICAL SIMULATIONS
-data_dir='/_data/SMYLE-MCB/SMYLE-FOSI/regrid/'
+data_dir='/_data/SMYLE-FOSI/regrid/'
 # Read in potential temperature and select surface layer only to reduce file sice
 ocn_temp_hist_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(data_dir+'r288x192.g.e22.GOMIPECOIAF_JRA-1p4-2018.TL319_g17.SMYLE.005.pop.h.TEMP.030601-036812.nc'))).TEMP.isel(z_t=0)
 # Reassign time values to be between 1958-2020 (Yeager et al., 2022)
@@ -306,7 +307,7 @@ for key in mcb_keys:
 
 #%% CREATE INDEX MASKS
 # Get overlay mask files (area is the same for all of them so can just pick one)
-seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/processed_data/mask_CESM/sesp_mask_CESM2_0.9x1.25_v3.nc'))
+seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/mask_CESM/sesp_mask_CESM2_0.9x1.25_v3.nc'))
 
 # Force seeding mask lat, lon to equal the output CESM2 data (rounding errors)
 seeding_mask = seeding_mask.assign_coords({'lat':atm_monthly_ctrl[ctrl_keys[0]]['lat'], 'lon':atm_monthly_ctrl[ctrl_keys[0]]['lon']})

@@ -1,6 +1,8 @@
 ### PURPOSE: Script to calculate E/C indices from surface temperature EOFs
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 08/27/2024
+### LAST MODIFIED: 09/06/2024
+
 ### Note: script adapted from smyle_mcb_eof_v3.py
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
@@ -15,7 +17,7 @@ from importlib import reload #to use type reload(fun)
 import matplotlib.patches as mpatches
 from scipy import signal
 from scipy import stats
-import lens2_preanalysis_functions as fun
+import function_dependencies as fun
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from cartopy.util import add_cyclic_point
 import cartopy.feature as cfeature
@@ -40,15 +42,15 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 ##################################################################################################################
 ## WHICH EXPERIMENT ARE YOU READING IN? ##
-# month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
-year_init = input('Which initialization year are you reading in (1997, 2015?): ')
-# enso_phase = input('Which ENSO event are you reading in (nino or nina)?: ')
-# sensitivity_opt = input('Sensitivity run (y or n)?: ')
-# Hard code for 2015 testing
+month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
+year_init = input('Which initialization year are you reading in (1997, 2015, 2019?): ')
+sensitivity_opt = input('Sensitivity run (y or n)?: ') # y for 05-1997 and 05-2015 only, else n
+mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
+## UNCOMMENT THESE OPTIONS FOR DEMO ##
 month_init = '05'
-# year_init = '2015'
-enso_phase = 'nino'
+year_init = '2015'
 sensitivity_opt = 'y'
+mcb_keys = ['06-02']
 ##################################################################################################################
 
 ## READ IN DATA
@@ -131,51 +133,7 @@ s_to_days = 86400 #s/day
 
 
 ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
-# Read in each ensemble member as a discontinuous time series by concatenating overlapping periods
-# Do you need to make processed climatology file?
-# process_opt = input('Do you need to make processed historical file? (y or n): ')
-process_opt = 'n'
-# Set target directory for processed files
-target_dir='/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed'
-# Make the target directory if necessary
-if not os.path.exists(target_dir):
-    os.makedirs(target_dir)
-# Process each ensemble member and save as a concatenated file with ensemble member as a dimension
-if process_opt=='y':
-    atm_monthly_ctrl_clim = {}
-    for m in clim_members:
-        print(m)
-        combined_vars=xr.Dataset()
-        for var in atm_varnames_monthly_subset:
-            file_subset_clim =  sorted(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/'+var+'/b.e21.BSMYLE.f09_g17.*'+m+'.cam*'))
-            for file in file_subset_clim:
-                if file_subset_clim.index(file)==0:
-                    da_merged = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                else:
-                    next_file = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                    da_merged = xr.concat([da_merged, next_file], dim='time')
-            combined_vars=xr.merge([combined_vars,da_merged])
-        atm_monthly_ctrl_clim[m] = combined_vars
-    # Combine all files into one xarray dataset with ensemble members as a new dimension
-    atm_monthly_ctrl_clim_xr = xr.concat(list(map(atm_monthly_ctrl_clim.get, clim_members)),pd.Index(clim_members,name='member'))
-    ## Convert time to datetime index
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign_coords(time=atm_monthly_ctrl_clim_xr.indexes['time'].to_datetimeindex())
-    ## Convert units
-    # PRECT
-    m_to_mm = 1e3 #mm/m
-    s_to_days = 86400 #s/day
-    # Convert from m/s to mm/day
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign(PRECT=atm_monthly_ctrl_clim_xr['PRECT']*m_to_mm*s_to_days)
-    atm_monthly_ctrl_clim_xr['PRECT'].attrs['units'] = 'mm/day'
-    # TS
-    # Convert from K to C
-    atm_monthly_ctrl_clim_xr = atm_monthly_ctrl_clim_xr.assign(TS=atm_monthly_ctrl_clim_xr['TS']-273.15)
-    atm_monthly_ctrl_clim_xr['TS'].attrs['units'] = '°C'
-    ### EXPORT PROCESSED NETCDF
-    atm_monthly_ctrl_clim_xr.to_netcdf(target_dir+'/BSMYLE.'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values[0]).year)+'-'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr.time.values[-1]).year)+'-'+month_init+'.TS_PRECT_concat.nc',mode='w',format='NETCDF4')
-elif process_opt=='n':
-    # Skip to read in pre-processed file
-    atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_concat.nc')[0])))
+atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_concat.nc')[0])))
 
 
 ## COMPUTE LONG TERM STANDARD DEVIATION AND MONTHLY CLIMATOLOGY MEAN FROM 1970-2014
@@ -442,7 +400,7 @@ def xarray_linear_detrend(data):
 ## Read in pop data
 # Read in regridded population data (as used in Wan et al., 2024)
 ## 2010 ##
-wd = '/home/j4wan/NCAR-ECIP/pop_data/gpw-v4-population-count-rev11_totpop_30_min_nc/'
+wd = '/_data/pop_data/gpw-v4-population-count-rev11_totpop_30_min_nc/'
 regrid_pop_count = xr.open_dataset(wd+'gpw-v4-population-count-rev11_totpop_192x288.nc')
 pop_count = regrid_pop_count.sel(time=2015).pop_count
 # Turn ocean values to nan
@@ -453,7 +411,7 @@ pop_wt = pop_count_subset/np.nansum(pop_count_subset)
 
 
 # Read in LENS2 SDs
-data_dir = '/home/j4wan/SMYLE-MCB/processed_data/LENS2/'
+data_dir = '/_data/LENS2/'
 lens2_ts_sd = fun.reorient_netCDF(xr.open_dataset(data_dir+'CESM-LENS2.hist.ensemble.std.TS.1970-2014.nc')).TS
 lens2_prect_sd = fun.reorient_netCDF(xr.open_dataset(data_dir+'CESM-LENS2.hist.ensemble.std.PRECT.1970-2014.nc')).PRECT
 # Align grid with CESM grid (fix rounding errors from regridding)
@@ -565,7 +523,7 @@ def djf_mean_annual(data):
 
 #%% METHOD 2: CALCULATE COUNTRY LEVEL POPULATION WEIGHTED T AND P ANOMALIES
 # Read in country geometry file
-countries = gpd.read_file('/home/j4wan/Migration/projections/country_shp/ne_50m_admin_0_countries.shp')
+countries = gpd.read_file('/_data/country_shp/ne_50m_admin_0_countries.shp')
 countries = countries.rename(columns={'ISO_N3':'country_id'})
 # Norway (ISO_N3=-99, need to manually add to dataframe)
 countries.loc[88,'ISO_A3']='NOR'
@@ -575,7 +533,7 @@ countries = countries.drop(countries[countries['country_id']=='-99'].index)
 countries['CountryID'] = countries.country_id.astype(int).astype(str).str.zfill(3).astype(float)
 
 # Read in country pop data
-pop_country_df = pd.read_csv('/home/j4wan/SMYLE-MCB/processed_data/gpw/gpw-v4-national-identifier-popcount-2015.csv', index_col=[0])
+pop_country_df = pd.read_csv('/_data/pop_data/gpw-v4-population-count-rev11_totpop_30_min_nc/gpw-v4-national-identifier-popcount-2015.csv', index_col=[0])
 
 # Subset peak DJF s.d. normalized anomalies
 ts_ctrl_detrend_peak = {}
@@ -669,11 +627,11 @@ combined_detrend_peak_country_level_geo_means.loc[combined_detrend_peak_country_
 combined_detrend_peak_country_level_geo_means.loc[combined_detrend_peak_country_level_geo_means['CountryID']==250.0,'ISO_A3']='FRA'
 
 # Export country-level dataframe as csv
-combined_detrend_peak_country_level_geo_means.to_csv('_data/SMYLE-MCB/processed_data/callahan_regression/country_popw_anom_djf_'+year_init+'-'+month_init+'_v2.csv')
-combined_detrend_peak_country_level_geo_means.drop(columns='geometry').to_csv('/_data/SMYLE-MCB/processed_data/callahan_regression/country_popw_anom_djf_nogeo_'+year_init+'-'+month_init+'_v2.csv')
+combined_detrend_peak_country_level_geo_means.to_csv('_data/callahan_regression/country_popw_anom_djf_'+year_init+'-'+month_init+'_v2.csv')
+combined_detrend_peak_country_level_geo_means.drop(columns='geometry').to_csv('/_data/callahan_regression/country_popw_anom_djf_nogeo_'+year_init+'-'+month_init+'_v2.csv')
 
 ## Read in E and C index from smyle_fosi_eindex.py
-e_c_index_df = pd.read_csv('/home/j4wan/SMYLE-MCB/processed_data/callahan_regression/e-c_index_djf_timeseries_'+year_init+'-'+month_init+'_v6.csv', index_col=[0])
+e_c_index_df = pd.read_csv('/_data/callahan_regression/e-c_index_djf_timeseries_'+year_init+'-'+month_init+'_v6.csv', index_col=[0])
 e_c_index_df = e_c_index_df.rename(columns={'time':'year','experiment':'exp_id'})
 
 
@@ -768,7 +726,7 @@ for c in country_list:
     country_correction_df = pd.concat([country_correction_df,xycoords],ignore_index=True)
 
 # Export country-level correction factors dataframe as csv
-country_correction_df.to_csv('/_data/SMYLE-MCB/processed_data/callahan_regression/country_correction_factor_djf_peak_'+year_init+'-'+month_init+'_v1.csv')
+country_correction_df.to_csv('/_data/callahan_regression/country_correction_factor_djf_peak_'+year_init+'-'+month_init+'_v1.csv')
 
 
 # Plot multi-panel scatter of absolute anomalies and e-index

@@ -1,6 +1,7 @@
 ### PURPOSE: Plot country-level losses from MCB-modified El Niño
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 08/27/2024
+### LAST MODIFIED: 09/06/2024
 
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
@@ -15,7 +16,7 @@ from importlib import reload #to use type reload(fun)
 import matplotlib.patches as mpatches
 from scipy import signal
 from scipy import stats
-import lens2_preanalysis_functions as fun
+import function_dependencies as fun
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from cartopy.util import add_cyclic_point
 import cartopy.feature as cfeature
@@ -40,22 +41,22 @@ plt.ion();
 
 ##################################################################################################################
 ## WHICH EXPERIMENT ARE YOU READING IN? ##
-# month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
-# year_init = input('Which initialization year are you reading in (1997, 2015?): ')
-# enso_phase = input('Which ENSO event are you reading in (nino or nina)?: ')
-# sensitivity_opt = input('Sensitivity run (y or n)?: ')
-# Hard code for 2015 testing
-month_init = '05'
-# year_init = '2015'
-enso_phase = 'nino'
-sensitivity_opt = 'y'
+month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
+year_init = input('Which initialization year are you reading in (1997, 2015, 2019?): ')
+sensitivity_opt = input('Sensitivity run (y or n)?: ') # y for 05-1997 and 05-2015 only, else n
+mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
 ## GDP option (gross or pc)
 gdp_opt = input('Gross (1) or per capita (2)?: ')
+## UNCOMMENT THESE OPTIONS FOR DEMO ##
+month_init = '05'
+year_init = '2015'
+sensitivity_opt = 'y'
+mcb_keys = ['06-02']
 ##################################################################################################################
 
 #%% READ IN DATA
 # Read in country geometry file
-countries = gpd.read_file('/home/j4wan/Migration/projections/country_shp/ne_50m_admin_0_countries.shp')
+countries = gpd.read_file('/_data/country_shp/ne_50m_admin_0_countries.shp')
 countries = countries.rename(columns={'ISO_N3':'country_id'})
 # Norway (ISO_N3=-99, need to manually add to dataframe)
 countries.loc[88,'ISO_A3']='NOR'
@@ -66,9 +67,9 @@ countries['CountryID'] = countries.country_id.astype(int).astype(str).str.zfill(
 
 ## Read in country-level economic losses from CM replication analysis
 if gdp_opt=='1':
-    loss = pd.read_csv('/_data/SMYLE-MCB/processed_data/callahan_regression/MCBbenefits_v2.csv',header=2)
+    loss = pd.read_csv('/_data/callahan_regression/MCBbenefits_v2.csv',header=2)
 elif gdp_opt=='2':
-    loss = pd.read_csv('/_data/SMYLE-MCB/processed_data/callahan_regression/MCBbenefits_percapita.csv',header=2, na_values= '#DIV/0!')
+    loss = pd.read_csv('/_data/callahan_regression/MCBbenefits_percapita.csv',header=2, na_values= '#DIV/0!')
 
 
 # Subset columns

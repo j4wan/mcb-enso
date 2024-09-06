@@ -1,8 +1,9 @@
 ### PURPOSE: Script to compare SMYLE AUFIRE and SMYLE MCB
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 05/28/2024
+### LAST MODIFIED: 09/06/2024
 
-### NOTES: adapted from smyle_aus_mcb_comparison_v1.py
+### NOTES: adapted from smyle_aus_mcb_comparison_v2.py
 
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
@@ -25,7 +26,7 @@ import datetime
 import os
 import dask
 import matplotlib.dates as mdates
-plt.ion();
+plt.ion(); #uncomment for interactive plotting
 
 dask.config.set({"array.slicing.split_large_chunks": False})
 
@@ -75,7 +76,7 @@ for sim in sim_keys:
         yr_init = ['2019','2020']
     ctrl_files = []
     for yr in yr_init:
-        ctrl_files = ctrl_files + glob.glob('/_data/SMYLE-MCB/realtime/b.e21.BSMYLE.f09_g17.'+yr+'*-'+month_init+'.*')
+        ctrl_files = ctrl_files + glob.glob('/_data/realtime/b.e21.BSMYLE.f09_g17.'+yr+'*-'+month_init+'.*')
     ctrl_members = []
     for i in ctrl_files:
         start = i.find('f09_g17.') + len('f09_g17.')
@@ -93,7 +94,7 @@ for sim in sim_keys:
             for key in mcb_keys:
                 for yr in yr_init:
                     mcb_files = []
-                    mcb_files = mcb_files + glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB*'+yr+'*-'+month_init+'_'+key+'.*')
+                    mcb_files = mcb_files + glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB*'+yr+'*-'+month_init+'_'+key+'.*')
                 mcb_members = []
                 for i in mcb_files:
                     start = i.find('f09_g17.MCB') + len('f09_g17.MCB.')
@@ -108,7 +109,7 @@ for sim in sim_keys:
             for key in mcb_keys:
                 mcb_files = []
                 for yr in yr_init:    
-                    mcb_files = mcb_files + glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB.'+yr+'*-'+month_init+'.*')
+                    mcb_files = mcb_files + glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB.'+yr+'*-'+month_init+'.*')
                 mcb_members = []
                 for i in mcb_files:
                     start = i.find('f09_g17.MCB') + len('f09_g17.MCB.')
@@ -123,7 +124,7 @@ for sim in sim_keys:
         for key in mcb_keys:
             mcb_files = []
             for yr in yr_init:    
-                mcb_files = mcb_files + glob.glob('/_data/SMYLE-MCB/SMYLE-AUFIRE/b.e21.BSMYLE-AUFIRE.f09_g17.'+yr+'*-'+month_init+'.*')
+                mcb_files = mcb_files + glob.glob('/_data/SMYLE-AUFIRE/b.e21.BSMYLE-AUFIRE.f09_g17.'+yr+'*-'+month_init+'.*')
             mcb_members = []
             for i in mcb_files:
                 start = i.find('f09_g17.') + len('f09_g17.')
@@ -137,7 +138,7 @@ for sim in sim_keys:
 
 
     # Get list of control climatology ensemble members
-    clim_files =  glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
+    clim_files =  glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
     clim_members = []
     for i in clim_files:
         start = i.find('f09_g17.1970-'+month_init+'.') + len('f09_g17.1970-'+month_init+'.')
@@ -149,7 +150,6 @@ for sim in sim_keys:
 
 
     # # Get interesction of control and MCB ensemble members so we only keep members that are in both
-    # intersect_members = sorted(list(set(ctrl_members).intersection(mcb_members)))
     intersect_members = ctrl_members[0:len(mcb_members)]
 
 
@@ -160,59 +160,6 @@ for sim in sim_keys:
     # PRECT
     m_to_mm = 1e3 #mm/m
     s_to_days = 86400 #s/day
-
-
-    ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS AND COMPUTE CLIMATOLOGY
-    # Read in each ensemble member as a continuous time series by taking mean of overlapping periods
-    # ATM
-    target_dir='/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed'
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir)
-    if len(os.listdir(target_dir))==0:
-        atm_monthly_ctrl_clim = {}
-        for m in clim_members:
-            print(m)
-            combined_vars=xr.Dataset()
-            for var in atm_varnames_monthly_subset:
-                file_subset_clim =  sorted(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/'+var+'/b.e21.BSMYLE.f09_g17.*'+m+'.cam*'))
-                for file in file_subset_clim:
-                    if file_subset_clim.index(file)==0:
-                        da_merged = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                    else:
-                        next_file = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(file)))[var]
-                        overlap_time=xr.merge([da_merged,next_file],compat='override',join='inner').time
-                        da_merge_intersect = da_merged.where(da_merged.time==overlap_time)
-                        next_file_intersect = next_file.where(next_file.time==overlap_time)
-                        da_merged = xr.merge([da_merged,next_file],compat='override',join='outer')
-                        da_merged.loc[{'time':[t for t in overlap_time.values]}] = (da_merge_intersect+next_file_intersect)/2
-                        da_merged.loc[{'time':[t for t in da_merged.time.values if t>overlap_time.values[-1]]}] = next_file.loc[{'time':[t for t in next_file.time.values if t>overlap_time.values[-1]]}]
-                combined_vars=xr.merge([combined_vars,da_merged])
-            atm_monthly_ctrl_clim[m] = combined_vars
-        # Combine all files into one xarray dataset with ensemble members as a new dimension
-        atm_monthly_ctrl_clim_xr[sim] = xr.concat(list(map(atm_monthly_ctrl_clim.get, clim_members)),pd.Index(clim_members,name='member'))
-        ## Convert time to datetime index
-        atm_monthly_ctrl_clim_xr[sim] = atm_monthly_ctrl_clim_xr[sim].assign_coords(time=atm_monthly_ctrl_clim_xr[sim].indexes['time'].to_datetimeindex())
-        ## Convert units
-        # PRECT
-        m_to_mm = 1e3 #mm/m
-        s_to_days = 86400 #s/day
-        # Convert from m/s to mm/day
-        atm_monthly_ctrl_clim_xr[sim] = atm_monthly_ctrl_clim_xr[sim].assign(PRECT=atm_monthly_ctrl_clim_xr[sim]['PRECT']*m_to_mm*s_to_days)
-        atm_monthly_ctrl_clim_xr[sim]['PRECT'].attrs['units'] = 'mm/day'
-        # TS
-        # Convert from K to C
-        atm_monthly_ctrl_clim_xr[sim] = atm_monthly_ctrl_clim_xr[sim].assign(TS=atm_monthly_ctrl_clim_xr[sim]['TS']-273.15)
-        atm_monthly_ctrl_clim_xr[sim]['TS'].attrs['units'] = '°C'
-        ### EXPORT PROCESSED NETCDF
-        atm_monthly_ctrl_clim_xr[sim].to_netcdf(target_dir+'/BSMYLE.'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr[sim].time.values[0]).year)+'-'+str(pd.to_datetime(atm_monthly_ctrl_clim_xr[sim].time.values[-1]).year)+'-'+month_init+'.atm_tseries_combined.nc',mode='w',format='NETCDF4')
-    else:
-        atm_monthly_ctrl_clim_xr[sim] = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE-MCB/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_tseries_combined.nc')[0])))
-
-    # Compute climatogical mean from 1970-2014
-    tslice = atm_monthly_ctrl_clim_xr[sim].loc[{'time':[t for t in pd.to_datetime(atm_monthly_ctrl_clim_xr[sim].time.values) if (t.year<2015)]}]
-    # ts_clim_ensemble_mean[sim] = tslice.mean(dim=('member','time')) # By annual climatology
-    ts_clim_ensemble_mean[sim] = tslice.TS.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
-
 
 
     ## READ IN CONTROL SIMULATION & PRE-PROCESS
@@ -226,7 +173,7 @@ for sim in sim_keys:
         atm_monthly_ctrl_single_mem = {}
         for m in intersect_members:
             print(m)
-            dir_ctrl = '/_data/SMYLE-MCB/realtime/b.e21.BSMYLE.f09_g17.'+m+'/atm/proc/tseries/month_1'
+            dir_ctrl = '/_data/realtime/b.e21.BSMYLE.f09_g17.'+m+'/atm/proc/tseries/month_1'
             file_subset_ctrl = []
             for var in atm_varnames_monthly_subset:
                 pattern = "."+var+"."
@@ -247,15 +194,7 @@ for sim in sim_keys:
         # Convert from K to C
         atm_monthly_ctrl[sim][key] = atm_monthly_ctrl[sim][key].assign(TS=atm_monthly_ctrl[sim][key]['TS']-273.15)
         atm_monthly_ctrl[sim][key]['TS'].attrs['units'] = '°C'
-        ##DRIFT CORRECTION
-        # Compute drift correction anomaly
-        # # By annual climatology
-        # ts_ctrl_anom[sim][key]=atm_monthly_ctrl[sim][key]['TS']-ts_clim_ensemble_mean[sim]
-        # By month climatology
-        i_month=np.arange(1,13,1)
         ts_ctrl_anom[sim][key] = atm_monthly_ctrl[sim][key]['TS']*1
-        for month in i_month:
-            ts_ctrl_anom[sim][key].loc[{'time':[t for t in pd.to_datetime(ts_ctrl_anom[sim][key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean[sim].sel(month=month)
         ts_ctrl_anom[sim][key].attrs['units']='\N{DEGREE SIGN}C'
         # Compute standard deviation
         ts_ctrl_anom_std[sim][key]=ts_ctrl_anom[sim][key].std(dim='member')
@@ -275,9 +214,9 @@ for sim in sim_keys:
         for m in mcb_sims[key]:
             print(m)
             if (sim=='nino') or (sim=='nina'):
-                dir_mcb = glob.glob('/_data/SMYLE-MCB/MCB/b.e21.BSMYLE.f09_g17.MCB*'+m+'/atm/proc/tseries/month_1')[0]
+                dir_mcb = glob.glob('/_data/MCB/b.e21.BSMYLE.f09_g17.MCB*'+m+'/atm/proc/tseries/month_1')[0]
             elif sim=='aus':
-                dir_mcb = glob.glob('/_data/SMYLE-MCB/SMYLE-AUFIRE/b.e21.BSMYLE-AUFIRE.f09_g17.*'+m+'/atm/proc/tseries/month_1')[0]
+                dir_mcb = glob.glob('/_data/SMYLE-AUFIRE/b.e21.BSMYLE-AUFIRE.f09_g17.*'+m+'/atm/proc/tseries/month_1')[0]
             file_subset_ctrl = []
             file_subset_mcb = []
             for var in atm_varnames_monthly_subset:
@@ -301,15 +240,7 @@ for sim in sim_keys:
         # Convert from K to C
         atm_monthly_mcb[sim][key] = atm_monthly_mcb[sim][key].assign(TS=atm_monthly_mcb[sim][key]['TS']-273.15)
         atm_monthly_mcb[sim][key]['TS'].attrs['units'] = '°C'
-        ##DRIFT CORRECTION
-        # Compute drift correction anomaly
-        # # By annual climatology
-        # ts_mcb_anom[sim][key]=atm_monthly_mcb[sim][key]['TS']-ts_clim_ensemble_mean[sim]
-        # By month climatology
-        i_month=np.arange(1,13,1)
         ts_mcb_anom[sim][key] = atm_monthly_mcb[sim][key]['TS']*1
-        for month in i_month:
-            ts_mcb_anom[sim][key].loc[{'time':[t for t in pd.to_datetime(ts_mcb_anom[sim][key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean[sim].sel(month=month)
         ts_mcb_anom[sim][key].attrs['units']='\N{DEGREE SIGN}C'
         # Compute standard deviation
         ts_mcb_anom_std[sim][key]=ts_mcb_anom[sim][key].std(dim='member')
@@ -432,8 +363,6 @@ for sim in sim_keys:
                 mcb_on_start_dict = {'':2,'06-02':1,'06-08':1,'06-11':1,'09-02':4,'09-11':4,'12-02':7}
                 mcb_on_end_dict = {'':5,'06-02':10,'06-08':4,'06-11':7,'09-02':10,'09-11':7,'12-02':10}
             elif sim=='aus':
-                # mcb_on_start_dict = {'':8} # to match Feb init MCB
-                # mcb_on_end_dict = {'':11}
                 mcb_on_start_dict = {'':4} # to match Nov init MCB
                 mcb_on_end_dict = {'':7}
             tslice=atm_monthly_ctrl[sim][ctrl_keys[0]][varname].isel(time=slice(mcb_on_start_dict[key],mcb_on_end_dict[key]))
@@ -449,11 +378,10 @@ for sim in sim_keys:
             atm_mcb_on_sig[sim][key][varname] = xr.where(np.abs(tslice2)>2*np.abs(sem), 0,1)
 
 
-
-## FIG. 1
 #%% PLOT MCB WINDOW SWCF, DJF PRECT, AND DJF TS MAPS (3X3)
 plot_labels = ['a','b','c','d','e','f']
 fig = plt.figure(figsize=(12,4));
+# sim_keys = ['nina','nina','nino']
 subplot_num = 0
 for sim in sim_keys:
     # MCB WINDOW SWCF
@@ -461,10 +389,9 @@ for sim in sim_keys:
     cmax=40
     ## Calculate the MCB mean for the first simulated year of the simulation
     # Subset MCB period
-    if sim=='nina':
+    if (sim=='nino') or (sim=='nina'):
         tslice=atm_monthly_ensemble_anom[sim]['']['SWCF'].isel(time=slice(2,5))
     elif sim=='aus':
-        # tslice=atm_monthly_ensemble_anom[sim]['']['SWCF'].isel(time=slice(8,11))
         tslice=atm_monthly_ensemble_anom[sim]['']['SWCF'].isel(time=slice(4,7))
     tlabel='MCB window'
     tslice=tslice.assign_coords(time=pd.to_datetime(tslice.time.values).month)
@@ -475,7 +402,7 @@ for sim in sim_keys:
     # Get mean value in seeding region for plot
     mean_val = float(fun.calc_weighted_mean_tseries(in_xr.where(seeding_mask_seed>0,drop=True)).values)
     summary_stat = [mean_val, np.nan]
-    # print(sim, summary_stat) #print values for main text
+    print(sim, summary_stat) #print values for main text
     swcf, p1 = fun.plot_panel_maps(in_xr=in_xr, cmin=cmin, cmax=cmax, ccmap='bwr', plot_zoom='global', central_lon=180,\
                             CI_in=atm_mcb_on_sig[sim]['']['SWCF'],CI_level=0.05,CI_display='inv_stipple',\
                             projection='Robinson',nrow=2,ncol=3,subplot_num=subplot_num,mean_val='none',cbar=False)
@@ -505,7 +432,6 @@ for sim in sim_keys:
     nino34_mean_val = float(fun.calc_weighted_mean_tseries(in_xr.where(nino34_mask>0,drop=True)).values)
     summary_stat = [mcb_mean_val, np.nan]
     prect, p2 = fun.plot_panel_maps(in_xr=in_xr, cmin=cmin, cmax=cmax, ccmap='BrBG', plot_zoom='global', central_lon=180,\
-                            #CI_in=atm_djf_sig['PRECT'],CI_level=0.05,CI_display='inv_stipple',\
                             projection='Robinson',nrow=2,ncol=3,subplot_num=subplot_num,mean_val='none',cbar=False)
     m1 = plt.quiver(atm_monthly_mcb[sim][key]['U'].lon.values[::10], atm_monthly_mcb[sim][key]['U'].lat.values[::10],\
                 atm_monthly_mcb[sim][key].mean(dim='member').isel(time=8).sel(lev=lev_sfc)['U'].values[::10,::10],atm_monthly_mcb[sim][key].mean(dim='member').isel(time=8).sel(lev=lev_sfc)['V'].values[::10,::10],\
@@ -535,7 +461,7 @@ for sim in sim_keys:
     mcb_mean_val = float(fun.calc_weighted_mean_tseries(in_xr.where(seeding_mask_seed>0,drop=True)).values)
     nino34_mean_val = float(fun.calc_weighted_mean_tseries(in_xr.where(nino34_mask>0,drop=True)).values)
     global_mean_val = float(fun.calc_weighted_mean_tseries(in_xr).values)
-    # print(sim, global_mean_val) # print values for main text
+    print(sim, global_mean_val) # print values for main text
     summary_stat = [mcb_mean_val, np.nan]
     ts, p3 = fun.plot_panel_maps(in_xr=in_xr, cmin=cmin, cmax=cmax, ccmap='RdBu_r', plot_zoom='global', central_lon=180,\
                             CI_in=ci_in,CI_level=ci_level,CI_display=ci_display,\
@@ -561,3 +487,4 @@ cbar_ax = fig.add_axes([0.385, 0.07, 0.25, 0.025]) #rect kwargs [left, bottom, w
 plt.colorbar(p2, cax = cbar_ax, orientation='horizontal', label='Precipitation (mm/day)', extend='both',pad=0.1);
 cbar_ax = fig.add_axes([0.655, 0.07, 0.25, 0.025]) #rect kwargs [left, bottom, width, height];
 plt.colorbar(p3, cax = cbar_ax, orientation='horizontal', label='Temperature (\N{DEGREE SIGN}C)', extend='both',pad=0.1);
+plt.close();
