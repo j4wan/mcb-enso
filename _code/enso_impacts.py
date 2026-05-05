@@ -1,11 +1,10 @@
 ### PURPOSE: Script to define ENSO temperature and precipitation regional impacts
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
-### DATE CREATED: 05/28/2024
-### LAST MODIFIED: 09/06/2024
-
-### NOTES: adapted from enso_regional_impact_mask.py
+### DATE CREATED: 05/05/2026
+### NOTES: adapted from smyle_mcb_eof_v5.py
 
 ##################################################################################################################
+
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
 # Import libraries
 import numpy as np
@@ -25,246 +24,32 @@ import cartopy.feature as cfeature
 import datetime
 import os
 import dask
-import cartopy
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from eofs.xarray import Eof
+import sys
+from matplotlib import rcParams
+import matplotlib.gridspec as gridspec
+import matplotlib.dates as mdates
+from dateutil.relativedelta import relativedelta
+import geopandas as gpd
+import matplotlib.colors as colors
+from matplotlib.patches import Rectangle
 
-plt.ion(); #uncomment for interactive plotting
-
-##################################################################################################################
-## WHICH EXPERIMENT ARE YOU READING IN? ##
-month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
-## UNCOMMENT THESE OPTIONS FOR DEMO ##
-month_init = '05'
-##################################################################################################################
-
-## READ IN DATA
-# Get list of control climatology ensemble members
-clim_files =  glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
-clim_members = []
-for i in clim_files:
-    start = i.find('f09_g17.1970-'+month_init+'.') + len('f09_g17.1970-'+month_init+'.')
-    tmp = i[start:start+3]
-    if tmp not in clim_members:
-        clim_members.append(tmp)
-clim_members = sorted(clim_members)
-print(clim_members) 
-
-
-# Create variable subset list
-atm_varnames_monthly_subset = ['TS','PRECT']
-
-
-## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
-atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_concat.nc')[0])))
-
-
-## COMPUTE LONG TERM STANDARD DEVIATION AND MONTHLY CLIMATOLOGY MEAN FROM 1970-2014
-# Subset time from 1970-2014
-hist_ext = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<2015)
-# Compute climatogical mean from 1970-2014
-ts_clim_ensemble_mean = hist_ext.TS.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
-prect_clim_ensemble_mean = hist_ext.PRECT.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
-
-
-# Subset data before AND including 2015 El Niño event
-atm_monthly_hist_subset = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<=2016)
-# Subset DJF (during peak ENSO) and JJA (post-peak ENSO)
-atm_monthly_hist_subset_djf = atm_monthly_hist_subset.where((atm_monthly_hist_subset.time.dt.month==1)|(atm_monthly_hist_subset.time.dt.month==2)|(atm_monthly_hist_subset.time.dt.month==12),drop=True)
-atm_monthly_hist_subset_jja = atm_monthly_hist_subset.where((atm_monthly_hist_subset.time.dt.month==6)|(atm_monthly_hist_subset.time.dt.month==7)|(atm_monthly_hist_subset.time.dt.month==8),drop=True)
-
-
-#%% How well does the historical SMYLE reproduce EL Niños?
-# Get overlay mask files (area is the same for all of them so can just pick one)
-seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/sesp_mask_CESM2_0.9x1.25_v3.nc'))
-
-# Force seeding mask lat, lon to equal the output CESM2 data (rounding errors)
-seeding_mask = seeding_mask.assign_coords({'lat':atm_monthly_hist_subset['lat'], 'lon':atm_monthly_hist_subset['lon']})
-# Subset 1 month of seeded grid cells 
-seeding_mask_seed = seeding_mask.mask.isel(time=9)
-# Add cyclical point for ML 
-seeding_mask_seed_wrap, lon_wrap = add_cyclic_point(seeding_mask_seed,coord=seeding_mask_seed.lon)
-
-# Define Niño 3.4 region
-lat_max = 5
-lat_min = -5
-lon_max = -120
-lon_min = -170
-# Generate Niño 3.4 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
-zeros_mask = atm_monthly_hist_subset.TS.isel(member=0, time=0)*0
-nino34_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
-                                (zeros_mask.lon>=lon_min) & (zeros_mask.lon<=lon_max),\
-                                1,zeros_mask)
-# Add cyclical point for ML 
-nino34_mask_wrap, lon_wrap = add_cyclic_point(nino34_mask,coord=nino34_mask.lon)
-
-## CALCULATE ENSEMBLE MEAN STANDARD DEVIATION FOR ALL GRID CELLS
-# DJF 
-hist_ensemble_djf_std = atm_monthly_hist_subset_djf[['TS','PRECT']].std(dim='time').mean(dim='member')
-# JJA
-hist_ensemble_jja_std = atm_monthly_hist_subset_jja[['TS','PRECT']].std(dim='time').mean(dim='member')
-
-## CALCULATE ANOMALY FOR THE 4 STRONGEST EL NINOS WITHIN 45 YEAR SPAN (1972, 1982, 1997, 2015)
-# Subset major historical El Nino events
-nino_events = [1972, 1982, 1991, 1997, 2015] # major
-
-for n in range(len(nino_events)):
-    print(nino_events[n])
-    nino_single_djf = atm_monthly_hist_subset_djf.where(((atm_monthly_hist_subset_djf.time.dt.year==nino_events[n])&(atm_monthly_hist_subset_djf.time.dt.month==12))|\
-                                                        ((atm_monthly_hist_subset_djf.time.dt.year==nino_events[n]+1)&(atm_monthly_hist_subset_djf.time.dt.month==1))|\
-                                                        ((atm_monthly_hist_subset_djf.time.dt.year==nino_events[n]+1)&(atm_monthly_hist_subset_djf.time.dt.month==2)),drop=True)
-    nino_single_jja = atm_monthly_hist_subset_jja.where(((atm_monthly_hist_subset_jja.time.dt.year==nino_events[n]+1)&(atm_monthly_hist_subset_jja.time.dt.month==6))|\
-                                                        ((atm_monthly_hist_subset_jja.time.dt.year==nino_events[n]+1)&(atm_monthly_hist_subset_jja.time.dt.month==7))|\
-                                                        ((atm_monthly_hist_subset_jja.time.dt.year==nino_events[n]+1)&(atm_monthly_hist_subset_jja.time.dt.month==8)),drop=True)
-    if n==0:
-        nino_djf_composite = nino_single_djf
-        nino_jja_composite = nino_single_jja
-    elif n>0:
-        nino_djf_composite=xr.concat([nino_djf_composite,nino_single_djf],dim='time')
-        nino_jja_composite=xr.concat([nino_jja_composite,nino_single_jja],dim='time')
-
-
-# Calculate average anomaly
-# DJF
-nino_djf_composite_ts_anom = nino_djf_composite.TS.mean(dim=('member','time')) - atm_monthly_hist_subset_djf.TS.mean(dim=('member','time'))
-nino_djf_composite_prect_anom = nino_djf_composite.PRECT.mean(dim=('member','time')) - atm_monthly_hist_subset_djf.PRECT.mean(dim=('member','time'))
-# JJA
-nino_jja_composite_ts_anom = nino_jja_composite.TS.mean(dim=('member','time')) - atm_monthly_hist_subset_jja.TS.mean(dim=('member','time'))
-nino_jja_composite_prect_anom = nino_jja_composite.PRECT.mean(dim=('member','time')) - atm_monthly_hist_subset_jja.PRECT.mean(dim=('member','time'))
-
-
-# Set significance threshold and plot
-# EDIT THIS LINE
-sig_threshold = 0.1
-##################################################################################################################################################################
-# Mask anomalies by significance threshold
-# DJF
-sig_djf_ts = xr.where(np.abs(nino_djf_composite_ts_anom)>sig_threshold*hist_ensemble_djf_std.TS, nino_djf_composite_ts_anom, np.nan)
-sig_djf_prect = xr.where(np.abs(nino_djf_composite_prect_anom)>sig_threshold*hist_ensemble_djf_std.PRECT, nino_djf_composite_prect_anom, np.nan)
-# JJA
-sig_jja_ts = xr.where(np.abs(nino_jja_composite_ts_anom)>sig_threshold*hist_ensemble_jja_std.TS, nino_jja_composite_ts_anom, np.nan)
-sig_jja_prect = xr.where(np.abs(nino_jja_composite_prect_anom)>sig_threshold*hist_ensemble_jja_std.PRECT, nino_jja_composite_prect_anom, np.nan)
-# Remove white line if plotting over Pacific Ocean.
-# Create a reference grid (1x1)
-lat_new = np.arange(-90, 91, 1)
-lon_new = np.arange(-180., 181., 1)
-
-
-# DJF
-# TS
-x=sig_djf_ts.interp(lat=lat_new, lon=lon_new, method='linear', kwargs={'fill_value': 'extrapolate'})
-lat = x.lat
-lon = x.lon
-data = x
-data_wrap, lon_wrap = add_cyclic_point(data,coord=lon)
-lat_mesh, lon_mesh  = np.meshgrid(lon_wrap,lat)
-plot_proj = ccrs.Robinson(central_longitude=180)
-plt.figure(figsize=(6,9));
-ax = plt.subplot(2,1,1, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal','label':'Temperature ('+nino_djf_composite.TS.units+')','fraction':0.075});
-ax.coastlines(); p.axes.set_global();
-plt.title('a',fontweight='bold',fontsize=14,loc='left');
-# PRECT
-x=sig_djf_prect.interp(lat=lat_new, lon=lon_new, method='linear', kwargs={'fill_value': 'extrapolate'})
-lat = x.lat
-lon = x.lon
-data = x
-data_wrap, lon_wrap = add_cyclic_point(data,coord=lon)
-lat_mesh, lon_mesh  = np.meshgrid(lon_wrap,lat)
-plot_proj = ccrs.Robinson(central_longitude=180)
-ax = plt.subplot(2,1,2, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=-8,vmax=8,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal','label':'Precipitation ('+nino_djf_composite.PRECT.units+')','fraction':0.075});
-ax.coastlines(); p.axes.set_global();
-plt.title('b',fontweight='bold',fontsize=14,loc='left');
-plt.tight_layout();
-
-
-#%% MAKE MASK OF 1's and 0's for warm/cold and wet/dry
-djf_ts_warm = xr.where(sig_djf_ts>0, 1, 0)
-djf_ts_warm = djf_ts_warm.rename('Warm')
-djf_ts_cold = xr.where(sig_djf_ts<0, 1, 0)
-djf_ts_cold = djf_ts_cold.rename('Cold')
-djf_prect_wet = xr.where(sig_djf_prect>0, 1, 0)
-djf_prect_wet = djf_prect_wet.rename('Wet')
-djf_prect_dry = xr.where(sig_djf_prect<0, 1, 0)
-djf_prect_dry = djf_prect_dry.rename('Dry')
-
-# PLOT MASKS
-# DJF warm
-x = djf_ts_warm
-plt.figure(figsize=(8,6));
-ax = plt.subplot(2,2,1, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=0,vmax=1,cmap='viridis',transform= ccrs.PlateCarree(),levels=3,cbar_kwargs={'orientation':'horizontal'});
-ax.coastlines(color='grey'); p.axes.set_global();
-plt.title('DJF warm');
-# DJF cold
-x = djf_ts_cold
-ax = plt.subplot(2,2,2, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=0,vmax=1,cmap='viridis',transform= ccrs.PlateCarree(),levels=3,cbar_kwargs={'orientation':'horizontal'});
-ax.coastlines(color='grey'); p.axes.set_global();
-plt.title('DJF cold');
-# DJF wet
-x = djf_prect_wet
-ax = plt.subplot(2,2,3, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=0,vmax=1,cmap='viridis',transform= ccrs.PlateCarree(),levels=3,cbar_kwargs={'orientation':'horizontal'});
-ax.coastlines(color='grey'); p.axes.set_global();
-plt.title('DJF wet');
-# DJF dry
-x = djf_prect_dry
-ax = plt.subplot(2,2,4, projection=plot_proj,transform=plot_proj)
-p = x.plot.contourf(ax=ax,vmin=0,vmax=1,cmap='viridis',transform= ccrs.PlateCarree(),levels=3,cbar_kwargs={'orientation':'horizontal'});
-ax.coastlines(color='grey'); p.axes.set_global();
-plt.title('DJF dry');
-# Plotting aesthetics
-plt.suptitle(str(sig_threshold)+'\u03C3');
-plt.tight_layout();
-
-# Save masks
-djf_mask_combined = xr.merge([djf_ts_warm, djf_ts_cold, djf_prect_wet, djf_prect_dry])
-# Uncomment to save intermediate output
-djf_mask_combined.to_netcdf('/_data/enso_regions/djf_major_nino_regions_'+str(month_init)+'_'+str(sig_threshold)+'_sigma_v2.nc',mode='w',format='NETCDF4')
-
-
-
-##################################################################################################################
-#%% CHECKPOINT: REGIONAL IMPACTS MAP + BAR PLOT
-#%% IMPORT LIBRARIES, DATA, AND FORMAT
-# Import libraries
-import numpy as np
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import pandas as pd
-import xarray as xr
-import glob
-from importlib import reload #to use type reload(fun)
-import matplotlib.patches as mpatches
-from scipy import signal
-from scipy import stats
-import function_dependencies as fun
-from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
-from cartopy.util import add_cyclic_point
-import cartopy.feature as cfeature
-import datetime
-import os
-import dask
-import cartopy
-from matplotlib.lines import Line2D
 plt.ion();
 
 dask.config.set({"array.slicing.split_large_chunks": False})
 
+#run this line in console before starting ipython if getting OMP_NUM_THREADS error
+os.environ["OMP_NUM_THREADS"] = "1"
+
 ##################################################################################################################
 ## WHICH EXPERIMENT ARE YOU READING IN? ##
 month_init = input('Which initialization month are you reading in (02, 05, 08, 11)?: ')
-year_init = input('Which initialization year are you reading in (1997, 2015, 2019?): ')
-sensitivity_opt = input('Sensitivity run (y or n)?: ') # y for 05-1997 and 05-2015 only, else n
-mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
-## UNCOMMENT THESE OPTIONS FOR DEMO ##
-month_init = '05'
-year_init = '2015'
+year_init = input('Which initialization year are you reading in (1997, 2015?): ')
+enso_phase = 'nino'
 sensitivity_opt = 'y'
-mcb_keys = ['06-02']
-# EDIT THIS LINE
-sig_threshold = 0.1
+## UNCOMMENT THESE OPTIONS FOR DEMO ##
+year_init = '2015'
+month_init = '05'
 ##################################################################################################################
 
 ## READ IN DATA
@@ -290,6 +75,7 @@ print(ctrl_members)
 # Get list of MCB ensemble members
 mcb_sims = {}
 if sensitivity_opt=='y':
+    mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
     for key in mcb_keys:
         for yr in yr_init:
             mcb_files = []
@@ -335,34 +121,51 @@ print(clim_members)
 # # Get interesction of control and MCB ensemble members so we only keep members that are in both
 intersect_members = ctrl_members[0:len(mcb_members)]
 
-# Create variable subset list
 
-atm_varnames_monthly_subset = ['TS','PRECT']
+# Create variable subset list
+atm_varnames_monthly_subset = ['TS','PRECT','LANDFRAC']
 
 # Conversion constants
 # PRECT
 m_to_mm = 1e3 #mm/m
 s_to_days = 86400 #s/day
 
+
 ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
-atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_concat.nc')[0])))
+# Read in each ensemble member as a discontinuous time series by concatenating overlapping periods
+atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_PS_concat.nc')[0])))
 
 
 ## COMPUTE LONG TERM STANDARD DEVIATION AND MONTHLY CLIMATOLOGY MEAN FROM 1970-2014
 # Subset time from 1970-2014
-hist_ext = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<2015)
-# Compute climatogical mean from 1970-2014
-ts_clim_ensemble_mean = hist_ext.TS.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
-prect_clim_ensemble_mean = hist_ext.PRECT.mean(dim=('member')).groupby('time.month').mean() # By monthly climatology
+hist_ext = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<2015).isel(member=slice(0,len(intersect_members)))[['TS','PRECT']]
+# Calculate monthly climatological mean
+hist_clim_ens_mean = hist_ext.mean(dim=('member')).groupby('time.month').mean()
+# Calculate standard deviation
+hist_ens_sd = hist_ext.std(dim=('time','member'))
+
+
+# Create formatted historical time series to append to control and MCB runs
+hist_window = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<=2017).isel(member=slice(0,len(intersect_members)))
+# Reassign ensemble member label so it can be appended to control and MCB runs
+hist_window = hist_window.assign_coords(member=intersect_members)
+
+
+# CALCULATE MONTHLY ANOMALIES FOR SMYLE HISTORICAL (1970-2017)
+ts_hist_anom = hist_window.TS.groupby('time.month') - hist_clim_ens_mean.TS
+ts_hist_anom.attrs['units'] = '\N{DEGREE SIGN}C'
+prect_hist_anom = hist_window.PRECT.groupby('time.month') - hist_clim_ens_mean.PRECT
+prect_hist_anom.attrs['units'] = 'mm/day'
 
 
 ## READ IN CONTROL SIMULATION & PRE-PROCESS
 # ATM
 atm_monthly_ctrl={}
 ts_ctrl_anom={}
-prect_ctrl_anom={}
-ts_ctrl_anom_std={}
-ts_ctrl_anom_sem={}
+ts_ctrl_ext_anom={} #extended time series appending historical SMYLE
+prect_ctrl_anom = {}
+prect_ctrl_ext_anom={} #extended time series appending historical SMYLE
+
 ctrl_keys=['']
 for key in ctrl_keys:
     atm_monthly_ctrl_single_mem = {}
@@ -389,20 +192,19 @@ for key in ctrl_keys:
     # Convert from K to C
     atm_monthly_ctrl[key] = atm_monthly_ctrl[key].assign(TS=atm_monthly_ctrl[key]['TS']-273.15)
     atm_monthly_ctrl[key]['TS'].attrs['units'] = '°C'
-    ##DRIFT CORRECTION
-    # By month climatology
+    # Compute climatological anomalies
     i_month=np.arange(1,13,1)
-    ts_ctrl_anom[key] = atm_monthly_ctrl[key]['TS']*1
-    prect_ctrl_anom[key] = atm_monthly_ctrl[key]['PRECT']*1
-    for month in i_month:
-        ts_ctrl_anom[key].loc[{'time':[t for t in pd.to_datetime(ts_ctrl_anom[key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean.sel(month=month)
-        prect_ctrl_anom[key].loc[{'time':[t for t in pd.to_datetime(prect_ctrl_anom[key].time.values) if t.month==month]}]-=prect_clim_ensemble_mean.sel(month=month)
+    ts_ctrl_copy = atm_monthly_ctrl[key]['TS']*1
+    prect_ctrl_copy = atm_monthly_ctrl[key]['PRECT']*1
+    ## TS
+    ts_ctrl_anom[key] = ts_ctrl_copy.groupby('time.month') - hist_clim_ens_mean.TS
+    ## PRECT
+    prect_ctrl_anom[key] = prect_ctrl_copy.groupby('time.month') - hist_clim_ens_mean.PRECT
+    # Reassign units
+    ## TS
     ts_ctrl_anom[key].attrs['units']='\N{DEGREE SIGN}C'
+    ## PRECT
     prect_ctrl_anom[key].attrs['units']='mm/day'
-    # Compute standard deviation
-    ts_ctrl_anom_std[key]=ts_ctrl_anom[key].std(dim='member')
-    # Compute twice standard error
-    ts_ctrl_anom_sem[key]=2 * ts_ctrl_anom[key].std(dim='member')/np.sqrt(len(ts_ctrl_anom[key].member))
 
 
 
@@ -410,7 +212,9 @@ for key in ctrl_keys:
 # ATM
 atm_monthly_mcb={}
 ts_mcb_anom={}
-prect_mcb_anom={}
+ts_mcb_ext_anom={} #extended time series appending historical SMYLE
+prect_mcb_anom = {}
+prect_mcb_ext_anom = {} #extended time series appending historical SMYLE
 ts_mcb_anom_std={}
 ts_mcb_anom_sem={}
 for key in mcb_keys:
@@ -441,43 +245,22 @@ for key in mcb_keys:
     # Convert from K to C
     atm_monthly_mcb[key] = atm_monthly_mcb[key].assign(TS=atm_monthly_mcb[key]['TS']-273.15)
     atm_monthly_mcb[key]['TS'].attrs['units'] = '°C'
-    ##DRIFT CORRECTION
-    # By month climatology
+    # Compute climatological anomalies
     i_month=np.arange(1,13,1)
-    ts_mcb_anom[key] = atm_monthly_mcb[key]['TS']*1
-    prect_mcb_anom[key] = atm_monthly_mcb[key]['PRECT']*1
-    for month in i_month:
-        ts_mcb_anom[key].loc[{'time':[t for t in pd.to_datetime(ts_mcb_anom[key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean.sel(month=month)
-        prect_mcb_anom[key].loc[{'time':[t for t in pd.to_datetime(prect_mcb_anom[key].time.values) if t.month==month]}]-=prect_clim_ensemble_mean.sel(month=month)
+    ts_mcb_copy = atm_monthly_mcb[key]['TS']*1
+    prect_mcb_copy = atm_monthly_mcb[key]['PRECT']*1 
+    ## TS
+    ts_mcb_anom[key] = ts_mcb_copy.groupby('time.month') - hist_clim_ens_mean.TS
+    ## PRECT
+    prect_mcb_anom[key] = prect_mcb_copy.groupby('time.month') - hist_clim_ens_mean.PRECT
+    # Reassign units
+    ## TS
     ts_mcb_anom[key].attrs['units']='\N{DEGREE SIGN}C'
+    ## PRECT
     prect_mcb_anom[key].attrs['units']='mm/day'
-    # Compute standard deviation
-    ts_mcb_anom_std[key]=ts_mcb_anom[key].std(dim='member')
-    # Compute twice standard error
-    ts_mcb_anom_sem[key]=2 * ts_mcb_anom[key].std(dim='member')/np.sqrt(len(ts_mcb_anom[key].member))
 
 
-## COMPUTE ANOMALIES FOR SELECT VARIABLES
-## 1a) MONTHLY ATMOSPHERE
-# Create empty dictionaries for anomalies
-atm_monthly_anom = {}
-atm_monthly_ensemble_anom = {}
-
-## Loop through subsetted varnames list. 
-print('##ATM MONTHLY##')
-for key in mcb_keys:
-    print(key)
-    atm_monthly_anom[key] = {}
-    atm_monthly_ensemble_anom[key] = {}
-    for varname in atm_varnames_monthly_subset:
-        print(varname)
-        atm_monthly_anom[key][varname] = atm_monthly_mcb[key][varname] - atm_monthly_ctrl[ctrl_keys[0]][varname]
-        atm_monthly_anom[key][varname].attrs['units'] = atm_monthly_ctrl[ctrl_keys[0]][varname].units
-        atm_monthly_ensemble_anom[key][varname] = atm_monthly_anom[key][varname].mean(dim='member')
-        atm_monthly_ensemble_anom[key][varname].attrs['units'] = atm_monthly_ctrl[ctrl_keys[0]][varname].units
-
-
-## RETRIEVE AND GENERATE ANALYSIS AREA MASKS
+#%% CREATE INDEX MASKS
 # Get overlay mask files (area is the same for all of them so can just pick one)
 seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/sesp_mask_CESM2_0.9x1.25_v3.nc'))
 
@@ -500,555 +283,582 @@ nino34_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
                                 1,zeros_mask)
 # Add cyclical point for ML 
 nino34_mask_wrap, lon_wrap = add_cyclic_point(nino34_mask,coord=nino34_mask.lon)
-                      
-# Read in ENSO impact region mask
-djf_mask_combined=xr.open_dataset('/_data/enso_regions/djf_major_nino_regions_'+str(month_init)+'_'+str(sig_threshold)+'_sigma_v2.nc')
- 
-# Identify signficant cells (ensemble mean differences > 2*SE)
-# Calculate standard error of control ensemble
-atm_monthly_sig = {}
+
+
+# Define Niño 3 region
+lat_max = 5
+lat_min = -5
+lon_max = -90
+lon_min = -150
+# Generate Niño 3 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = atm_monthly_ctrl[ctrl_keys[0]].TS.isel(member=0, time=0)*0
+nino3_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_min) & (zeros_mask.lon<=lon_max),\
+                                1,zeros_mask)
+# Add cyclical point for ML 
+nino3_mask_wrap, lon_wrap = add_cyclic_point(nino3_mask,coord=nino3_mask.lon)
+
+
+# Add cyclical point for ML 
+nino34_mask_wrap, lon_wrap = add_cyclic_point(nino34_mask,coord=nino34_mask.lon)      
+## Define Niño 4 region
+lat_max = 5
+lat_min = -5
+lon_WP_max = -150
+lon_WP_min = -180
+lon_EP_max = 180
+lon_EP_min = 160
+# Generate Niño 4 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = atm_monthly_ctrl[ctrl_keys[0]].TS.isel(member=0, time=0)*0
+nino4_WP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_WP_min) & (zeros_mask.lon<=lon_WP_max),\
+                                1,zeros_mask)
+nino4_EP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_EP_min) & (zeros_mask.lon<=lon_EP_max),\
+                                1,zeros_mask)
+
+nino4_mask = nino4_WP_mask + nino4_EP_mask
+# Add cyclical point for Niño 4  
+nino4_mask_wrap, lon_wrap = add_cyclic_point(nino4_mask,coord=nino4_mask.lon)
+     
+# Define E/C Index region
+lat_max = 20
+lat_min = -20
+lon_WP_max = -80
+lon_WP_min = -180
+lon_EP_max = 180
+lon_EP_min = 140
+# Generate Niño 3.4 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = atm_monthly_ctrl[ctrl_keys[0]].TS.isel(member=0, time=0)*0
+ecindex_WP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_WP_min) & (zeros_mask.lon<=lon_WP_max),\
+                                1,zeros_mask)
+ecindex_EP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_EP_min) & (zeros_mask.lon<=lon_EP_max),\
+                                1,zeros_mask)
+
+ecindex_mask = ecindex_WP_mask + ecindex_EP_mask
+# Add cyclical point for ML 
+ecindex_mask_wrap, lon_wrap = add_cyclic_point(ecindex_mask,coord=ecindex_mask.lon)
+
+
+# Read in LENS2 SDs
+data_dir = '/_data/LENS2/'
+lens2_ts_sd = fun.reorient_netCDF(xr.open_dataset(data_dir+'CESM-LENS2.hist.ensemble.std.TS.monthly_clim.1970-2014.nc')).TS
+lens2_prect_sd = fun.reorient_netCDF(xr.open_dataset(data_dir+'CESM-LENS2.hist.ensemble.std.PRECT.monthly_clim.1970-2014.nc')).PRECT
+# Align grid with CESM grid (fix rounding errors from regridding)
+lens2_ts_sd = lens2_ts_sd.assign_coords({'lon':ts_ctrl_anom[''].lon,\
+                            'lat':ts_ctrl_anom[''].lat})
+lens2_prect_sd = lens2_prect_sd.assign_coords({'lon':ts_ctrl_anom[''].lon,\
+                            'lat':ts_ctrl_anom[''].lat})
+# Turn ocean values to nan
+landmask = atm_monthly_ctrl['']['LANDFRAC'].isel(time=0,member=0).load()
+
+
+### DETREND ANOMALIES AND LANDMASKED SD NORMALIZED ANOMALIES
+## Load in all anomaly files at once (required for detrending) and convert to standard deviation space
+# CONTROL
+ts_ctrl_anom_load = {}
+prect_ctrl_anom_load = {}
+for key in ctrl_keys:
+    ts_ctrl_anom_load[key] = ts_ctrl_anom[key].load().groupby('time.month')/lens2_ts_sd
+    prect_ctrl_anom_load[key] = prect_ctrl_anom[key].load().groupby('time.month')/lens2_prect_sd
+
+# MCB
+ts_mcb_anom_load = {}
+prect_mcb_anom_load = {}
 for key in mcb_keys:
-    atm_monthly_sig[key] = {}
-    for varname in atm_varnames_monthly_subset:
-        print(varname)
-        sem = stats.sem(atm_monthly_ctrl[ctrl_keys[0]][varname].values,axis=0)
-        atm_monthly_sig[key][varname] = xr.where(np.abs(atm_monthly_ensemble_anom[key][varname])>2*np.abs(sem), 0,1)
+    print(key)
+    ts_mcb_anom_load[key] = ts_mcb_anom[key].load().groupby('time.month')/lens2_ts_sd
+    prect_mcb_anom_load[key] = prect_mcb_anom[key].load().groupby('time.month')/lens2_prect_sd
+
+# HISTORICAL
+ts_hist_anom_load = ts_hist_anom.load().groupby('time.month')/lens2_ts_sd
+prect_hist_anom_load = prect_hist_anom.load().groupby('time.month')/lens2_prect_sd
 
 
-# Calculate standard error of control ensemble for DJF of ENSO event
-atm_djf_sig = {}
+## Detrend with the historical predicted values
+# HISTORICAL
+ts_hist_detrend, ts_hist_detrend_resid = fun.xarray_linear_detrend(ts_hist_anom_load.mean(dim='member'))
+prect_hist_detrend, prect_hist_detrend_resid = fun.xarray_linear_detrend(prect_hist_anom_load.mean(dim='member'))
+# Mask out land
+ts_hist_detrend_sd_land= xr.where((landmask>0.1),ts_hist_detrend,np.nan)
+prect_hist_detrend_sd_land= xr.where((landmask>0.1),prect_hist_detrend,np.nan)
+
+
+# Create continuous time series by averaging over overlapping periods for El Niño years
+tcont = np.unique(ts_ctrl_anom_load[''].time.values)
+ts_hist_detrend_resid_subset = ts_ctrl_anom_load[''].isel(member=0)*np.nan
+prect_hist_detrend_resid_subset = prect_ctrl_anom_load[''].isel(member=0)*np.nan
+for t in tcont:
+    t_unique = ts_hist_detrend_resid.where((ts_hist_detrend_resid.time==t),drop=True).mean(dim='time')
+    p_unique = prect_hist_detrend_resid.where((prect_hist_detrend_resid.time==t),drop=True).mean(dim='time')
+    ts_hist_detrend_resid_subset = xr.where((ts_hist_detrend_resid_subset.time==t),t_unique,ts_hist_detrend_resid_subset)
+    prect_hist_detrend_resid_subset = xr.where((prect_hist_detrend_resid_subset.time==t),p_unique,prect_hist_detrend_resid_subset)
+
+
+# CONTROL
+ts_ctrl_detrend_land_sd = {}
+prect_ctrl_detrend_land_sd = {}
+for key in ctrl_keys:
+    # Mask out land
+    ts_sd_land_only = xr.where((landmask>0.1),ts_ctrl_anom_load[key],np.nan)
+    prect_sd_land_only = xr.where((landmask>0.1),prect_ctrl_anom_load[key],np.nan)
+    # Detrend with historical values
+    ts_ctrl_detrend_land_sd[key] = ts_sd_land_only-ts_hist_detrend_resid_subset
+    prect_ctrl_detrend_land_sd[key] = prect_sd_land_only-prect_hist_detrend_resid_subset
+
+## MCB
+ts_mcb_detrend_land_sd = {}
+prect_mcb_detrend_land_sd = {}
 for key in mcb_keys:
-    atm_djf_sig[key] = {}
-    for varname in atm_varnames_monthly_subset:
-        print(varname)
-        # Subset first year of simulation
-        t1=atm_monthly_ctrl[ctrl_keys[0]][varname].isel(time=slice(4,16))
-        # Subset DJF and rename by month
-        tslice=t1.loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]
-        tslice=tslice.assign_coords(time=pd.to_datetime(tslice.time.values).month)
-        tslice = tslice.rename({'time':'month'})
-        tslice = fun.weighted_temporal_mean_clim(tslice)
-        sem = stats.sem(tslice.values,axis=0)
-        # Subset MCB anomaly dataarray for DJF of first year
-        t2=atm_monthly_ensemble_anom[key][varname].isel(time=slice(4,16))
-        tslice2 =t2.loc[{'time':[t for t in pd.to_datetime(t2.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]
-        tslice2 =tslice2.assign_coords(time=pd.to_datetime(tslice2.time.values).month)
-        tslice2 = tslice2.rename({'time':'month'})
-        tslice2 = fun.weighted_temporal_mean_clim(tslice2)
-        atm_djf_sig[key][varname] = xr.where(np.abs(tslice2)>2*np.abs(sem), 0,1)
+    print(key)
+    # Mask out land
+    ts_sd_land_only = xr.where((landmask>0.1),ts_mcb_anom_load[key],np.nan)
+    prect_sd_land_only = xr.where((landmask>0.1),prect_mcb_anom_load[key],np.nan)
+    # Detrend with historical values
+    ts_mcb_detrend_land_sd[key] = ts_sd_land_only-ts_hist_detrend_resid_subset
+    prect_mcb_detrend_land_sd[key] = prect_sd_land_only-prect_hist_detrend_resid_subset
 
 
 
-# Define ENSO regions over which to calculate responses
-# test = fun.weighted_temporal_mean(atm_monthly_ensemble_anom['06-02']['TS'].isel(time=slice(4,16)).loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]).mean(dim='time')
-lat = djf_mask_combined.lat
-lon = djf_mask_combined.lon
+#%% CALCULATE T AND P ANOMALIES FOR 9 MONTH MEAN
+# Create El Niño DJF average
+if year_init=='1997':
+    peak_yrs = [1997,1998]
+elif year_init=='2015':
+    peak_yrs = [2015,2016]
+# Create June-August subset (15 months) for peak ENSO year
+def june_feb_subset(data):
+    xr_subset = data.where(((data['time.year']==peak_yrs[0])&(data['time.month']>=6))|\
+                                        ((data['time.year']==peak_yrs[1])&(data['time.month']<=2))\
+                                        ,drop=True)
+    return xr_subset
 
-# a) S Asia warming
+# Subset Jun-Aug s.d. normalized anomalies
+ts_ctrl_detrend_jun_aug = {}
+ts_mcb_detrend_jun_aug = {}
+ts_mcb_anom_jun_aug = {}
+
+prect_ctrl_detrend_jun_aug = {}
+prect_mcb_detrend_jun_aug = {}
+prect_mcb_anom_jun_aug = {}
+
+sum_ctrl_detrend_jun_aug = {}
+sum_mcb_detrend_jun_aug = {}
+sum_mcb_anom_jun_aug = {}
+
+# CONTROL
+for key in ctrl_keys:
+    # Subset June t-1 to Feb t and take mean
+    ts_ctrl_detrend_jun_aug[key] = fun.weighted_temporal_mean(june_feb_subset(ts_ctrl_detrend_land_sd[key]), by_year=False)
+    prect_ctrl_detrend_jun_aug[key] = fun.weighted_temporal_mean(june_feb_subset(prect_ctrl_detrend_land_sd[key]), by_year=False)
+    # Calculate absolute anomaly sum
+    sum_ctrl_detrend_jun_aug[key] = np.abs(ts_ctrl_detrend_jun_aug[key]) + np.abs(prect_ctrl_detrend_jun_aug[key])
+    # Create anomaly mask based on standard deviation threshold for T and P
+    sd_max = 2 ## USER INPUT
+    ts_warm_mask = xr.where(ts_ctrl_detrend_jun_aug[key].mean(dim='member')>sd_max, 1, 0)
+    ts_cool_mask = xr.where(ts_ctrl_detrend_jun_aug[key].mean(dim='member')<-sd_max, 1, 0)
+    prect_wet_mask = xr.where(prect_ctrl_detrend_jun_aug[key].mean(dim='member')>sd_max, 1, 0)
+    prect_dry_mask = xr.where(prect_ctrl_detrend_jun_aug[key].mean(dim='member')<-sd_max, 1, 0)
+
+# MCB
+for key in mcb_keys:
+    print(key)
+    # Subset June t-1 to Feb t and take mean
+    ts_mcb_detrend_jun_aug[key] = fun.weighted_temporal_mean(june_feb_subset(ts_mcb_detrend_land_sd[key]), by_year=False)
+    prect_mcb_detrend_jun_aug[key] = fun.weighted_temporal_mean(june_feb_subset(prect_mcb_detrend_land_sd[key]), by_year=False)
+    # Calculate absolute anomaly sum
+    sum_mcb_detrend_jun_aug[key] = np.abs(ts_mcb_detrend_jun_aug[key]) + np.abs(prect_mcb_detrend_jun_aug[key])
+    # Calculate MCB anomalies from control
+    ts_mcb_anom_jun_aug[key] =  ts_mcb_detrend_jun_aug[key] - ts_ctrl_detrend_jun_aug['']
+    prect_mcb_anom_jun_aug[key] =  prect_mcb_detrend_jun_aug[key] - prect_ctrl_detrend_jun_aug['']
+    sum_mcb_anom_jun_aug[key] =  sum_mcb_detrend_jun_aug[key] - sum_ctrl_detrend_jun_aug['']
+
+
+# Create region specific masks based on SD thresholds and lat/lon bounds
+# Define lat/lon variables
+lat = ts_ctrl_detrend_jun_aug[''].lat
+lon = ts_ctrl_detrend_jun_aug[''].lon
+
+# a) Asia warming
 lat_min = -11
-lat_max = 36
+lat_max = 60
 lon_min = 66
-lon_max = 126
-s_asia_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-s_asia_warm = s_asia_warm.rename('a')
-# # PLOT MASKS
-# x = s_asia_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# b) Japan warming
-lat_min = 30
-lat_max = 45
-lon_min = 120
 lon_max = 150
-japan_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-japan_warm = japan_warm.rename('b')
-# # PLOT MASKS
-# x = japan_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+asia_warm = xr.where((ts_warm_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+asia_warm = asia_warm.rename('ASIA')
 
-# c) Alaska warming
-lat_min = 50
-lat_max = 72
+# b) Western North America warming
+lat_min = 20
+lat_max = 90
 lon_min = -170
 lon_max = -90
-alaska_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-alaska_warm = alaska_warm.rename('c')
-# # PLOT MASKS
-# x = alaska_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+wna_warm = xr.where((ts_warm_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+wna_warm = wna_warm.rename('W. NAM')
 
-# d) SE U.S. cooling
-lat_min = 20
-lat_max = 50
-lon_min = -121
-lon_max = -75
-se_us_cold = xr.where((djf_mask_combined.Cold>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-se_us_cold = se_us_cold.rename('d')
-# # PLOT MASKS
-# x = se_us_cold
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# e) S U.S. wettening
-lat_min = 20
-lat_max = 50
-lon_min = -125
-lon_max = -75
-se_us_wet = xr.where((djf_mask_combined.Wet>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-se_us_wet = se_us_wet.rename('e')
-# # PLOT MASKS
-# x = se_us_wet
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# f) N Brazil drying
-lat_min = -25
-lat_max = 15
-lon_min = -67
+# c) South America warming
+lat_min = -60
+lat_max = 20
+lon_min = -100
 lon_max = -30
-brazil_dry = xr.where((djf_mask_combined.Dry>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-brazil_dry = brazil_dry.rename('f')
-# # PLOT MASKS
-# x = brazil_dry
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+wsa_warm = xr.where((ts_warm_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+wsa_warm = wsa_warm.rename('SAM')
 
-# g) E Brazil warming
-lat_min = -25
-lat_max = 0
-lon_min = -50
-lon_max = -30
-brazil_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-brazil_warm = brazil_warm.rename('g')
-# # PLOT MASKS
-# x = brazil_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+# d) Africa warming
+lat_min = -60
+lat_max = 25
+lon_min = -25
+lon_max = 60
+saf_warm = xr.where((ts_warm_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+saf_warm = saf_warm.rename('AFR')
 
-# h) E Brazil wettening
-lat_min = -30
-lat_max = 0
-lon_min = -50
-lon_max = -34
-brazil_wet = xr.where((djf_mask_combined.Wet>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-brazil_wet = brazil_wet.rename('h')
-# # PLOT MASKS
-# x = brazil_wet
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# i) C/E equatorial Pacific wettening
-lat_min = -15
-lat_max = 10
-ep_lon_min = -180
-ep_lon_max = -80
-wp_lon_min = 125
-wp_lon_max = 181
-equator_wet = xr.where((djf_mask_combined.Wet>0)&(lat>lat_min)&(lat<lat_max)&(((lon>ep_lon_min)&(lon<ep_lon_max))|((lon>wp_lon_min)&(lon<wp_lon_max))), 1, np.nan)
-equator_wet = equator_wet.rename('i')
-#equator_wet = equator_wet.interp(lat=lat_new, lon=lon_new, method='linear', kwargs={'fill_value': 'extrapolate'})
-# # PLOT MASKS
-# x = equator_wet
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# j) S equatorial Pacific drying
-lat_min = -50
-lat_max = 0
-ep_lon_min = -180
-ep_lon_max = -162
-wp_lon_min = 80
-wp_lon_max = 181
-s_pacific_dry = xr.where((djf_mask_combined.Dry>0)&(lat>lat_min)&(lat<lat_max)&(((lon>ep_lon_min)&(lon<ep_lon_max))|((lon>wp_lon_min)&(lon<wp_lon_max))), 1, np.nan)
-#s_pacific_dry = s_pacific_dry.interp(lat=lat_new, lon=lon_new, method='linear', kwargs={'fill_value': 'extrapolate'})
-s_pacific_dry = s_pacific_dry.rename('j')
-# # PLOT MASKS
-# x = s_pacific_dry
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
-
-# k) Australia warming
+# e) Australia warming
 lat_min = -40
 lat_max = -11
 lon_min = 112
 lon_max = 154
-aus_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-aus_warm = aus_warm.rename('k')
-# # PLOT MASKS
-# x = aus_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+aus_warm = xr.where((ts_warm_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+aus_warm = aus_warm.rename('AUS')
 
-# l) South Africa drying
-lat_min = -36
-lat_max = -15
-lon_min = 10
-lon_max = 36
-s_africa_dry = xr.where((djf_mask_combined.Dry>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-s_africa_dry = s_africa_dry.rename('l')
-# # PLOT MASKS
-# x = s_africa_dry
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+# f) Eastern North America cooling
+lat_min = 20
+lat_max = 50
+lon_min = -150
+lon_max = -75
+ena_cool = xr.where((ts_cool_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+ena_cool = ena_cool.rename('E. NAM')
 
-# m) South Africa warming
-lat_min = -36
-lat_max = -15
-lon_min = 10
-lon_max = 36
-s_africa_warm = xr.where((djf_mask_combined.Warm>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-s_africa_warm = s_africa_warm.rename('m')
-# # PLOT MASKS
-# x = s_africa_warm
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='RdBu_r',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+# g) Southern South America cooling
+lat_min = -60
+lat_max = -20
+lon_min = -90
+lon_max = -30
+ssa_cool = xr.where((ts_cool_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+ssa_cool = ssa_cool.rename('S. SAM')
 
-# n) East Africa wettening
+# h) Europe cooling
+lat_min = 35
+lat_max = 90
+lon_min = -15
+lon_max = 40
+eur_cool = xr.where((ts_cool_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+eur_cool = eur_cool.rename('EUR')
+
+# i) East Africa cooling
+lat_min = -5
+lat_max = 15
+lon_min = 35
+lon_max = 52
+eaf_cool = xr.where((ts_cool_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+eaf_cool = eaf_cool.rename('E. AFR')
+
+# j) SE Asia cooling
+lat_min = -15
+lat_max = 20
+lon_min = 73
+lon_max = 180
+asia_cool = xr.where((ts_cool_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+asia_cool = asia_cool.rename('S.E. ASIA')
+
+# n) Southern South America wettening
+lat_min = -60
+lat_max = -20
+lon_min = -90
+lon_max = -30
+ssa_wet = xr.where((prect_wet_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+ssa_wet = ssa_wet.rename('SAM')
+
+# o) Eastern Africa wettening
+lat_min = -20
+lat_max = 15
+lon_min = 0
+lon_max = 52
+ceaf_wet = xr.where((prect_wet_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+ceaf_wet = ceaf_wet.rename('E. AFR')
+
+# p) Middle East wettening
+lat_min = 10
+lat_max = 55
+lon_min = 25
+lon_max = 90
+mie_wet = xr.where((prect_wet_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+mie_wet = mie_wet.rename('ME')
+
+# q) Central/South America drying
+lat_min = -10
+lat_max = 30
+lon_min = -120
+lon_max = -30
+csa_dry = xr.where((prect_dry_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+csa_dry = csa_dry.rename('CAM/SAM')
+
+# r) Western Africa drying
+lat_min = -10
+lat_max = 30
+lon_min = -25
+lon_max = 10
+waf_dry = xr.where((prect_dry_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+waf_dry = waf_dry.rename('W. AFR')
+
+# s) Asia drying
 lat_min = -11
-lat_max = 10
-lon_min = 23
-lon_max = 41
-e_africa_wet = xr.where((djf_mask_combined.Wet>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
-e_africa_wet = e_africa_wet.rename('n')
-# # PLOT MASKS
-# x = e_africa_wet
-# plt.figure(figsize=(8,6));
-# ax = plt.subplot(1,1,1, projection=plot_proj,transform=plot_proj)
-# p = x.plot.contourf(ax=ax,vmin=-3,vmax=3,cmap='BrBG',transform= ccrs.PlateCarree(),levels=9,cbar_kwargs={'orientation':'horizontal'});
-# ax.coastlines(color='grey'); p.axes.set_global();
+lat_max = 60
+lon_min = 66
+lon_max = 150
+asia_dry = xr.where((prect_dry_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+asia_dry = asia_dry.rename('ASIA')
 
-# Combine all regions into one master array
-djf_regions_combined = xr.merge([s_asia_warm, japan_warm, alaska_warm, se_us_cold, se_us_wet, brazil_dry, brazil_warm, brazil_wet, equator_wet, s_pacific_dry, aus_warm, s_africa_dry, s_africa_warm, e_africa_wet])
-# Create list of temperature impact regions
-t_regions = ['a', 'b', 'c', 'd', 'g', 'k', 'm']
-t_warm_regions = ['a', 'b', 'c', 'g', 'k','m']
-t_cool_regions = ['d']
-p_wet_regions = ['e', 'h', 'i', 'n' ]
-p_dry_regions = ['f','j','l']
+# t) Australia drying
+lat_min = -45
+lat_max = -11
+lon_min = 112
+lon_max = 154
+aus_dry = xr.where((prect_dry_mask>0)&(lat>lat_min)&(lat<lat_max)&(lon>lon_min)&(lon<lon_max), 1, np.nan)
+aus_dry = aus_dry.rename('AUS')
+
+# Combine warm, cold, wet, and dry regions into four xarrays
+warm_regions_combined = xr.merge([asia_warm,wna_warm,wsa_warm,saf_warm,aus_warm])
+cool_regions_combined = xr.merge([ena_cool,ssa_cool,eur_cool,eaf_cool,asia_cool])
+wet_regions_combined = xr.merge([ssa_wet,ceaf_wet,mie_wet])
+dry_regions_combined = xr.merge([csa_dry,waf_dry,asia_dry,aus_dry])
 
 
-## Take area weighted mean of MCB response and historical climatology value in each target region
-# Subset first year (hard coded for month_init==05)
-# Only display bars for 06-02 and 12-02 for illustration
+# Subset MCB anomalies by region and save output as dataframe for plotting
 mcb_keys_sub = ['06-02','06-08','12-02']
-percent_opt = input('percent or absolute?: ')
-djf_region_df = pd.DataFrame()
-# for key in mcb_keys:  #comment for plotting
-for key in mcb_keys_sub: #uncomment for plotting  
-    print(key)  
-    for region in list(djf_regions_combined.keys()):
-        if region in t_regions:
-            xr_in = atm_monthly_ensemble_anom[key]['TS'].isel(time=slice(4,16))
-            clim_xr_in = ts_ctrl_anom[''].mean(dim='member').isel(time=slice(4,16))
-            clim_xr_in_sem = ts_ctrl_anom[''].std(dim='member').isel(time=slice(4,16))/np.sqrt(len(ts_ctrl_anom[''].member))
-        elif region not in t_regions:
-            xr_in = atm_monthly_ensemble_anom[key]['PRECT'].isel(time=slice(4,16))
-            clim_xr_in = prect_ctrl_anom[''].mean(dim='member').isel(time=slice(4,16))
-            clim_xr_in_sem = prect_ctrl_anom[''].std(dim='member').isel(time=slice(4,16))/np.sqrt(len(prect_ctrl_anom[''].member))
-        # Get peak DJF and average over the three months
-        xr_in_djf = fun.weighted_temporal_mean(xr_in.loc[{'time':[t for t in pd.to_datetime(xr_in.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]).mean(dim='time')
-        clim_xr_in_djf = fun.weighted_temporal_mean(clim_xr_in.loc[{'time':[t for t in pd.to_datetime(clim_xr_in.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]).mean(dim='time')
-        clim_xr_in_sem_djf = fun.weighted_temporal_mean(clim_xr_in_sem.loc[{'time':[t for t in pd.to_datetime(clim_xr_in_sem.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}]).mean(dim='time')
-        # Mask out by each region, calculate spatial mean, and save as pandas datafame
-        xr_in_djf_region_mean = float(fun.calc_weighted_mean_tseries(xr.where(djf_regions_combined[region]==1, xr_in_djf, np.nan)))
-        clim_xr_in_djf_region_mean = float(fun.calc_weighted_mean_tseries(xr.where(djf_regions_combined[region]==1, clim_xr_in_djf, np.nan)))
-        clim_xr_in_sem_djf_region_mean = float(fun.calc_weighted_mean_tseries(xr.where(djf_regions_combined[region]==1, clim_xr_in_sem_djf, np.nan)))
-        if percent_opt =='percent':
-            # Set ymin and ymax for exceedance column
-            ymin=-100
-            ymax=100
-            xr_in_djf_region_mean = xr_in_djf_region_mean/abs(clim_xr_in_djf_region_mean)
-        new_row = pd.Series({'experiment':key, 'region':region, 'anom':xr_in_djf_region_mean,'sem':clim_xr_in_sem_djf_region_mean})
-        djf_region_df = pd.concat([djf_region_df,new_row.to_frame().T],ignore_index=True)
-        djf_region_df['Anom>SEM'] = np.where(np.abs(djf_region_df['anom'])>np.abs(djf_region_df['sem']),'**','')
-        if percent_opt=='percent':
-            djf_region_df['exceed'] = np.where(np.abs(djf_region_df['anom'])>(ymax/100),'**','')
+metrics_keys = ['Warm','Cool','Wet','Dry']
+regional_anomalies_df = pd.DataFrame()
+for key in mcb_keys_sub:
+    print(key)
+    for metric in metrics_keys:
+        if metric=='Warm':
+            xr_in = ts_mcb_anom_jun_aug[key]
+            xr_mask = warm_regions_combined
+        elif metric=='Cool':
+            xr_in = ts_mcb_anom_jun_aug[key]
+            xr_mask = cool_regions_combined
+        elif metric=='Wet':
+            xr_in = prect_mcb_anom_jun_aug[key]
+            xr_mask = wet_regions_combined
+        elif metric=='Dry':
+            xr_in = prect_mcb_anom_jun_aug[key]
+            xr_mask = dry_regions_combined        
+        regions = list(xr_mask.keys())
+        for region in regions:
+            anom = float(fun.calc_weighted_mean_tseries(xr.where(xr_mask[region]>0,xr_in,np.nan)).mean())
+            se = float(fun.calc_weighted_mean_tseries(xr.where(xr_mask[region]>0,xr_in,np.nan)).std()/np.sqrt(len(xr_in.member)))
+            new_row = pd.Series({'experiment':key, 'metric':metric, 'region':region, 'anom':anom,'se':se})
+            regional_anomalies_df = pd.concat([regional_anomalies_df,new_row.to_frame().T],ignore_index=True)
 
 
-
-
-## FIG 4. REGIONAL EL NINO IMPACTS COMBINED SUBPLOTS ##
-# Set color and hatching preferences for bar chart
-mcb_col_rev = ['#4d9221']
-mcb_col_amp = ['#c51b7d']
-mcb_hatch = {'06-02':None,'06-08':None,'12-02':None} # no hatch for 2 cases
-
+## FIGURE 4. T and P anomaly maps with contoured regions + bar plots
 # Set figure dimensions and grid
-fig = plt.figure(figsize=(13, 8),layout='constrained')
-spec = fig.add_gridspec(4, 5)
-
-# Hard code the row and column index for each subplot in grid
-row_vec = [0,0,0,0,0,1,2,3,3,3,3,3,2,1]
-col_vec = [0,1,2,3,4,4,4,4,3,2,1,0,0,0]
-
-# Make base map with El Niño regions
-# Create a reference grid (1x1)
-lat_new = np.arange(-90, 91, 1)
-lon_new = np.arange(-180., 181., 1)
-# ac_example = ['a','c']
-plot_proj = ccrs.PlateCarree(central_longitude=160)
-ax0 = fig.add_subplot(spec[1:3, 1:4], projection=plot_proj,transform=plot_proj)
-for region in list(djf_regions_combined.keys()):
-# for region in ac_example:
-    x = djf_regions_combined.interp(lat=lat_new, lon=lon_new, method='linear', kwargs={'fill_value': 'extrapolate'})[region]
-    xnonan = x.fillna(0)
-    if region in t_warm_regions:
-        col = '#b2182b'
-    elif region in t_cool_regions:
-        col='#2166ac'
-    elif region in p_wet_regions:
-        col = '#018571'
-    elif region in p_dry_regions:
-        col = '#a6611a'
-    p =x.plot.contourf(ax=ax0,levels=np.linspace(0,1.1,2), colors=col,alpha=0.5, transform= ccrs.PlateCarree(),add_colorbar=False);
-    xnonan.plot.contour(ax=ax0,levels=np.linspace(0,1.1,2), colors=col, linewidth=0.5, transform= ccrs.PlateCarree(),add_colorbar=False);
+fig = plt.figure(figsize=(10, 8))
+spec = fig.add_gridspec(4, 4)
+# A) Temperature SD
+plot_proj = ccrs.Robinson(central_longitude=0)
+ax0 = fig.add_subplot(spec[0:2, 0:2], projection=plot_proj,transform=plot_proj)
+p=ts_ctrl_detrend_jun_aug[''].mean(dim='member').plot(ax=ax0,vmin=-10,vmax=10,cmap='RdBu_r',transform=ccrs.PlateCarree(), add_labels=False,add_colorbar=True,cbar_kwargs={'orientation':'horizontal','extend':'both','shrink':0.6,'label':'Temperature (s.d.)'})
+ax0.set_title('A',fontsize=14,fontweight='bold',loc='left');
 ax0.coastlines(color='grey'); p.axes.set_global();
-ax0.add_feature(cartopy.feature.LAND, color='gainsboro');
-ax0.add_feature(cartopy.feature.OCEAN, color='white');
-ax0.add_feature(cartopy.feature.BORDERS, color='grey');
-ax0.spines['geo'].set_edgecolor('white');
-ax0.legend([Line2D([0], [0],color='#b2182b',alpha=0.5,linestyle='None',marker='s',markersize=12),\
-            Line2D([0], [0],color='#2166ac',alpha=0.5,linestyle='None',marker='s',markersize=12),\
-            Line2D([0], [0],color='#018571',alpha=0.5,linestyle='None',marker='s',markersize=12),\
-            Line2D([0], [0],color='#a6611a',alpha=0.5,linestyle='None',marker='s',markersize=12),\
-            Line2D([0], [0],color='#4d9221',alpha=1,linestyle='None',marker='s',markersize=12),\
-            Line2D([0], [0],color='#c51b7d',alpha=1,linestyle='None',marker='s',markersize=12)],\
-            ['Warm','Cool', 'Wet','Dry','MCB ameliorates El Niño effect','MCB exacerbates El Niño effect'],bbox_to_anchor =(0.5,0), loc='lower center',\
-        ncol=3, fancybox=True, shadow=False,frameon=True,fontsize=12),;
-# Annotate letters for each region
-lab = 'a'
-lab_lon = 85
-lab_lat= 30
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat - 2, lab_lat - 15],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'b'
-lab_lon = 135
-lab_lat= 50
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat - 2, lab_lat - 15],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'c'
-lab_lon = 210
-lab_lat= 40
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat + 8, lab_lat + 21],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'd'
-lab_lon = 227
-lab_lat= 35
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon+6, lab_lon+19], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'e'
-lab_lon = 300
-lab_lat= 22
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-19], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'f'
-lab_lon = 320
-lab_lat= 15
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-18], [lab_lat+2, lab_lat-10],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'g'
-lab_lon = 339
-lab_lat= -10
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-17], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'h'
-lab_lon = 339
-lab_lat= -37
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-18], [lab_lat+5, lab_lat+10],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'i'
-lab_lon = 180
-lab_lat= 18
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat - 2, lab_lat - 15],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'j'
-lab_lon = 210
-lab_lat= -45
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-19], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'k'
-lab_lon = 130
-lab_lat= -55
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat + 10, lab_lat + 35],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'l'
-lab_lon = 28
-lab_lat= -55
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon, lab_lon], [lab_lat + 10, lab_lat + 21],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'm'
-lab_lon = 0
-lab_lat= -25
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon+8, lab_lon+22], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-lab = 'n'
-lab_lon = 52
-lab_lat= -3
-ax0.text(lab_lon, lab_lat, lab, size=14, fontweight='bold',
-         horizontalalignment='center',
-         transform=ccrs.PlateCarree());
-plt.plot([lab_lon-6, lab_lon-17], [lab_lat+5, lab_lat+5],
-         color='k', linestyle='-',
-         transform=ccrs.PlateCarree(),
-         );
-
-pos1 = ax0.get_position() # get the original position 
-pos2 = [pos1.x0 + -0.07, pos1.y0+ -0.05 ,  pos1.width+0.1, pos1.height+0.1] 
-ax0.set_position(pos2) # set a new position
+# Add bar plot region contours
+# Warm
+x = warm_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors='#b2182b', linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=False,add_colorbar=False);
+# Cool
+x = cool_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors='#2166ac', linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=False,add_colorbar=False);
 
 
-# Bar plots for % of ENSO anomaly for each region
-for region in list(djf_regions_combined.keys()):
-    #plt.figure(figsize=(4,3));
-    plot_val = djf_region_df[djf_region_df['region']==region]['anom']
-    if region in t_warm_regions:
-        ylab = '\N{GREEK CAPITAL LETTER DELTA}T (°C)'
-        ymin = -0.8
-        ymax= 0.35
-        colormat=np.where(plot_val>0, mcb_col_amp,mcb_col_rev)
-        col = '#b2182b'
-    elif region in t_cool_regions:
-        ylab = '\N{GREEK CAPITAL LETTER DELTA}T (°C)'
-        ymin = -0.8
-        ymax= 0.35
-        colormat=np.where(plot_val<0, mcb_col_amp,mcb_col_rev)
-        col='#2166ac'
-    elif region in p_wet_regions:
-        ylab = '\N{GREEK CAPITAL LETTER DELTA}P (mm/day)'
-        ymin = -1.7
-        ymax=0.8
-        colormat=np.where(plot_val>0, mcb_col_amp,mcb_col_rev)
-        col = '#018571'
-    elif region in p_dry_regions:
-        ylab = '\N{GREEK CAPITAL LETTER DELTA}P (mm/day)'
-        ymin = -1.7
-        ymax=0.8
-        colormat=np.where(plot_val<0, mcb_col_amp,mcb_col_rev)     
-        col = '#a6611a'
-    ax = fig.add_subplot(spec[row_vec[list(djf_regions_combined.keys()).index(region)],col_vec[list(djf_regions_combined.keys()).index(region)]])
-    if percent_opt=='percent':
-        ax.bar(djf_region_df[djf_region_df['region']==region]['experiment'], djf_region_df[djf_region_df['region']==region]['anom']*100,color=colormat,hatch=list(mcb_hatch.values()));
-        ymin=-100
-        ymax=100
-        ax.set_ylim(ymin,ymax)
-        ax.set_yticks(np.arange(ymin,ymax+ymax/2,ymax/2))
-        plt.yticks(fontsize=12);
-        ax.set_ylabel("% of ENSO anomaly",fontsize=12);
-        # Add arrow over bars that exceed the axis limits
-        for bar in ax.patches:
-            if abs(bar.get_height())>ymax:
-                ax.annotate('',
-                xy=((bar.get_x() + bar.get_width() / 2),75*np.sign(bar.get_height())), xycoords='data',
-                xytext=((bar.get_x() + bar.get_width() / 2),50*np.sign(bar.get_height())), textcoords='data', 
-                arrowprops=dict(arrowstyle='simple', connectionstyle="arc3",color=bar.get_facecolor(),lw=2),annotation_clip=False)
-        # ADD ANNOTATION FOR REGION A EXPERIMENTS
-        if region=='a':
-            ax.annotate('Full', (ax.patches[0].get_x()+ax.patches[0].get_width()/2,50), ha='center',va='center',size=10,fontweight='bold',color='#a50f15');
-            ax.annotate('effort', (ax.patches[0].get_x()+ax.patches[0].get_width()/2,30), ha='center',va='center',size=10,fontweight='bold',color='#a50f15');
-            ax.annotate('Early', (ax.patches[1].get_x()+ax.patches[1].get_width()/2,50), ha='center',va='center',size=10,fontweight='bold',color='#a50f15');
-            ax.annotate('action', (ax.patches[1].get_x()+ax.patches[1].get_width()/2,30), ha='center',va='center',size=10,fontweight='bold',color='#a50f15');
-            ax.annotate('11th', (ax.patches[2].get_x()+ax.patches[2].get_width()/2,50), ha='center',va='center',size=10,fontweight='bold',color='#fc9272');
-            ax.annotate('hour', (ax.patches[2].get_x()+ax.patches[2].get_width()/2,30), ha='center',va='center',size=10,fontweight='bold',color='#fc9272');
-    elif percent_opt=='absolute':
-        ax.bar(djf_region_df[djf_region_df['region']==region]['experiment'], djf_region_df[djf_region_df['region']==region]['anom'],color=colormat,hatch=list(mcb_hatch.values()));
-        ax.set_ylim(ymin,ymax)
-        ax.set_ylabel(ylab)
-    ax.set_title(region,color='k',loc='left',fontsize=14,fontweight='bold')
-    ax.set(xticklabels=[]);ax.tick_params(bottom=False);
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["bottom"].set_visible(False)
+# B) Precipitation SD
+ax0 = fig.add_subplot(spec[2:4, 0:2], projection=plot_proj,transform=plot_proj)
+p=prect_ctrl_detrend_jun_aug[''].mean(dim='member').plot(ax=ax0,vmin=-10,vmax=10,cmap='BrBG', transform=ccrs.PlateCarree(), add_labels=False,add_colorbar=True,cbar_kwargs={'orientation':'horizontal','extend':'both','shrink':0.6,'label':'Precipitation (s.d.)'})
+ax0.coastlines(color='grey'); p.axes.set_global();
+ax0.set_title('B',fontsize=14,fontweight='bold',loc='left');
+# Add bar plot region contours
+# Wet
+x = wet_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors='#018571', linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=False,add_colorbar=False);
+# Dry
+x = dry_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors='#a6611a', linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=False,add_colorbar=False);
+
+# C) Temperature bar plots
+ax1 = fig.add_subplot(spec[0:2, 2:4]);
+mcb_legend_longname = {'06-02':'Full effort','06-08':'Early action','06-11':'','09-02':'','09-11':'','12-02':'11th hour'}
+bar_colors = ['#66c2a5','#fc8d62','#8da0cb']
+bar_hatch = ('....','///','+++')
+df_warm = regional_anomalies_df[regional_anomalies_df['metric']=='Warm'].sort_values('region')
+df_cool = regional_anomalies_df[regional_anomalies_df['metric']=='Cool'].sort_values('region')
+df_in =pd.concat([df_warm,df_cool],ignore_index=True)
+pivot_mean = df_in[['experiment','region','anom','metric']].pivot_table(index='region',columns='experiment',sort=False)
+pivot_se = df_in[['experiment','region','se','metric']].pivot_table(index='region',columns='experiment',sort=False)
+bar_width = 0.25
+x = np.arange(len(pivot_mean.index))
+for i, column in enumerate(pivot_mean.columns):
+    if i==0:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column],bar_width,
+                    label=column, color='k',edgecolor='k',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+    elif i==len(pivot_mean.columns)-1:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column], bar_width,
+                    label=column, fill=None, edgecolor='k',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+    else:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column], bar_width,
+                    label=column, fill=None, edgecolor='k',hatch='///',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+ax1.set_yticks(x + bar_width / 3)
+ax1.set_yticklabels(pivot_mean.index)
+plt.legend(['Full effort', 'Early action','11th hour'],loc='lower left')
+ax1.invert_yaxis();
+plt.xlim(-6,6);
+plt.axvline(0,ymin=ax1.get_ylim()[0],ymax=ax1.get_ylim()[1],color='k',linestyle='dashed');
+# Add warm rectangle
+w = ax1.get_xlim()[1]-ax1.get_xlim()[0]
+h = abs((ax1.get_ylim()[1]-ax1.get_ylim()[0])/len(pivot_mean)*len(np.unique(df_warm['region'])))
+ax1.add_patch(Rectangle((ax1.get_xlim()[0],ax1.get_ylim()[1]),width=w,height=h,facecolor='#b2182b',alpha=0.2,zorder=-1))
+ax1.annotate('Warm', xy=(5.7,ax1.get_ylim()[1]+h*.2),ha='right',fontsize=12,fontweight='bold',color='#b2182b')
+# Add cool rectangle
+w = ax1.get_xlim()[1]-ax1.get_xlim()[0]
+h = (ax1.get_ylim()[1]-ax1.get_ylim()[0])/len(pivot_mean)*len(np.unique(df_cool['region']))
+ax1.add_patch(Rectangle((ax1.get_xlim()[0],ax1.get_ylim()[0]),width=w,height=h,facecolor='#2166ac',alpha=0.2,zorder=-1))
+ax1.annotate('Cool', xy=(5.7,ax1.get_ylim()[0]+h*.8),ha='right',fontsize=12,fontweight='bold',color='#2166ac')
+# Add labels
+ax1.get_legend().remove()
+plt.xlabel('\N{GREEK CAPITAL LETTER DELTA} Temperature (s.d.)',fontsize=12);
+plt.ylabel('');
+ax1.annotate(year_init+'-'+str(int(year_init)+1)+' El Niño', xy=(.5,1.02), fontsize=12, ha='center',xycoords='axes fraction',color='k');
+if year_init=='2015':
+    ax1.set_title('C',fontsize=14,fontweight='bold',loc='left');
+elif year_init=='1997':
+    ax1.set_title('E',fontsize=14,fontweight='bold',loc='left');
+
+
+# D) Precipitation bar plots
+ax1 = fig.add_subplot(spec[2:4, 2:4]);
+mcb_legend_longname = {'06-02':'Full effort','06-08':'Early action','06-11':'','09-02':'','09-11':'','12-02':'11th hour'}
+bar_colors = ['#66c2a5','#fc8d62','#8da0cb']
+df_wet = regional_anomalies_df[regional_anomalies_df['metric']=='Wet'].sort_values('region')
+df_dry = regional_anomalies_df[regional_anomalies_df['metric']=='Dry'].sort_values('region')
+df_in =pd.concat([df_wet,df_dry],ignore_index=True)
+pivot_mean = df_in[['experiment','region','anom','metric']].pivot_table(index='region',columns='experiment',sort=False)
+pivot_se = df_in[['experiment','region','se','metric']].pivot_table(index='region',columns='experiment',sort=False)
+bar_width = 0.25
+x = np.arange(len(pivot_mean.index))
+for i, column in enumerate(pivot_mean.columns):
+    if i==0:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column],bar_width,
+                    label=column, color='k',edgecolor='k',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+    elif i==len(pivot_mean.columns)-1:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column], bar_width,
+                    label=column, fill=None, edgecolor='k',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+    else:
+        bars = ax1.barh(x + i * bar_width, pivot_mean[column], bar_width,
+                    label=column, fill=None, edgecolor='k',hatch='///',xerr=2*pivot_se[('se',column[1])], error_kw={'ecolor':'grey','elinewidth': 1, 'capsize':0})
+
+ax1.set_yticks(x + bar_width / 3)
+ax1.set_yticklabels(pivot_mean.index)
+if year_init=='1997':
+    plt.legend(['Full effort', 'Early action','11th hour'],loc='lower left');
+ax1.invert_yaxis();
+plt.xlim(-3,3);
+plt.axvline(0,ymin=ax1.get_ylim()[0],ymax=ax1.get_ylim()[1],color='k',linestyle='dashed');
+# Add wet rectangle
+w = ax1.get_xlim()[1]-ax1.get_xlim()[0]
+h = abs((ax1.get_ylim()[1]-ax1.get_ylim()[0])/len(pivot_mean)*len(np.unique(df_wet['region'])))
+ax1.add_patch(Rectangle((ax1.get_xlim()[0],ax1.get_ylim()[1]),width=w,height=h,facecolor='#018571',alpha=0.2,zorder=-1))
+ax1.annotate('Wet', xy=(2.7,ax1.get_ylim()[1]+h*.2),ha='right',fontsize=12,fontweight='bold',color='#018571')
+# Add dry rectangle
+w = ax1.get_xlim()[1]-ax1.get_xlim()[0]
+h = (ax1.get_ylim()[1]-ax1.get_ylim()[0])/len(pivot_mean)*len(np.unique(df_dry['region']))
+ax1.add_patch(Rectangle((ax1.get_xlim()[0],ax1.get_ylim()[0]),width=w,height=h,facecolor='#a6611a',alpha=0.2,zorder=-1))
+ax1.annotate('Dry', xy=(2.7,ax1.get_ylim()[0]+h*.8),ha='right',fontsize=12,fontweight='bold',color='#a6611a')
+# Add labels
+plt.xlabel('\N{GREEK CAPITAL LETTER DELTA} Precipitation (s.d.)',fontsize=12);
+plt.ylabel('');
+if year_init=='2015':
+    ax1.set_title('D',fontsize=14,fontweight='bold',loc='left');
+elif year_init=='1997':
+    ax1.set_title('F',fontsize=14,fontweight='bold',loc='left');
+
+# Wait for graphics to load
+plt.tight_layout();
+
+
+
+## SI W/ FIG 4. REGIONS LABELED
+region_colors = ['#66c2a5','#fc8d62','#8da0cb','#e78ac3','#a6d854']
+# Set figure dimensions and grid
+fig = plt.figure(figsize=(10, 8))
+spec = fig.add_gridspec(4, 4)
+# a) Temperature SD
+plot_proj = ccrs.Robinson(central_longitude=0)
+ax0 = fig.add_subplot(spec[0:2, 0:2], projection=plot_proj,transform=plot_proj)
+ax0.set_title('A',fontsize=14,fontweight='bold',loc='left');
+ax0.coastlines(color='grey'); 
+# Warm
+subplot_num=0
+patch=[]
+x = warm_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors=region_colors[subplot_num], linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=region);
+    patch.append(mpatches.Patch(color=region_colors[subplot_num], label=region))
+    subplot_num+=1
+plt.legend(loc='upper center',handles=patch,ncol=2,bbox_to_anchor=(0.5,0));
+plt.annotate('Warm', xy=(0.5,1.05), ha='center', xycoords='axes fraction',color='k',fontsize=12);
+# Cool
+ax0 = fig.add_subplot(spec[0:2, 2:4], projection=plot_proj,transform=plot_proj)
+ax0.set_title('B',fontsize=14,fontweight='bold',loc='left');
+ax0.coastlines(color='grey'); 
+subplot_num=0
+patch=[]
+x = cool_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors=region_colors[subplot_num], linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=region);
+    patch.append(mpatches.Patch(color=region_colors[subplot_num], label=region))
+    subplot_num+=1
+plt.legend(loc='upper center',handles=patch,ncol=2,bbox_to_anchor=(0.5,0));
+plt.annotate('Cool', xy=(0.5,1.05), ha='center', xycoords='axes fraction',color='k',fontsize=12);
+# Wet
+ax0 = fig.add_subplot(spec[2:4,0:2], projection=plot_proj,transform=plot_proj)
+ax0.set_title('C',fontsize=14,fontweight='bold',loc='left');
+ax0.coastlines(color='grey'); 
+subplot_num=0
+patch=[]
+x = wet_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors=region_colors[subplot_num], linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=region);
+    patch.append(mpatches.Patch(color=region_colors[subplot_num], label=region))
+    subplot_num+=1
+plt.legend(loc='upper center',handles=patch,ncol=2,bbox_to_anchor=(0.5,0));
+plt.annotate('Wet', xy=(0.5,1.05), ha='center', xycoords='axes fraction',color='k',fontsize=12);
+# Dry
+ax0 = fig.add_subplot(spec[2:4,2:4], projection=plot_proj,transform=plot_proj)
+ax0.set_title('D',fontsize=14,fontweight='bold',loc='left');
+ax0.coastlines(color='grey'); 
+subplot_num=0
+patch=[]
+x = dry_regions_combined
+for region in list(x.keys()):
+    xnonan = x.fillna(0)
+    xnonan[region].plot.contour(ax=ax0, levels=np.linspace(0,1.1,2), colors=region_colors[subplot_num], linewidth=0.5, transform= ccrs.PlateCarree(), add_labels=region);
+    patch.append(mpatches.Patch(color=region_colors[subplot_num], label=region))
+    subplot_num+=1
+plt.legend(loc='upper center',handles=patch,ncol=2,bbox_to_anchor=(0.5,0));
+plt.annotate('Dry', xy=(0.5,1.05), ha='center', xycoords='axes fraction',color='k',fontsize=12);
+# Figure aesthetics
+plt.tight_layout();
+
+
+
+
+
