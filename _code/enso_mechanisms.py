@@ -1,9 +1,7 @@
 ### PURPOSE: Script to calculate ENSO metrics (SOI, Walker cell, thermocline, wind stress)
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
-### DATE CREATED: 05/28/2024
-### LAST MODIFIED: 09/06/2024
-
-### NOTES: adapted from enso_metrics_v1.py
+### DATE CREATED: 05/05/2026
+### NOTES: adapted from enso_metrics_v2.py
 
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
@@ -79,6 +77,7 @@ print(ctrl_members)
 # Get list of MCB ensemble members
 mcb_sims = {}
 if sensitivity_opt=='y':
+    mcb_keys = ['06-02','06-08','06-11','09-02','09-11','12-02']
     for key in mcb_keys:
         for yr in yr_init:
             mcb_files = []
@@ -124,9 +123,11 @@ print(clim_members)
 # # Get interesction of control and MCB ensemble members so we only keep members that are in both
 intersect_members = ctrl_members[0:len(mcb_members)]
 
+
 # Create variable subset list
 atm_varnames_monthly_subset = ['LANDFRAC','TS','PRECT','PS','U','V']
 ocn_varnames_monthly_subset = ['TEMP','TAUX']
+
 
 # Conversion constants
 # PRECT
@@ -135,17 +136,12 @@ s_to_days = 86400 #s/day
 
 
 ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
-atm_monthly_ctrl_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_clim_concat.nc')[0]))
+## ATM
+atm_monthly_drift_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_drift_clim.nc')[0]))
 
-# Compute ensemble climatogical mean from 1970-2014
-ts_clim_ensemble_mean = atm_monthly_ctrl_clim_xr.TS.mean(dim=('member'))
-ps_clim_ensemble_mean = atm_monthly_ctrl_clim_xr.PS.mean(dim=('member'))
-
-
-# OCN
+## OCN 
 data_dir = '/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/ocn_tseries/TEMP/regrid/'
 target_dir = os.path.join(data_dir,'processed')
-
 # Read in ensemble and time averaged data
 ocn_monthly_ctrl_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob(target_dir+'/r288x192*_v2.nc')[0]))['TEMP']
 temp_clim_ensemble_mean = ocn_monthly_ctrl_clim_xr.mean(dim='member')
@@ -154,10 +150,13 @@ temp_clim_ensemble_mean = ocn_monthly_ctrl_clim_xr.mean(dim='member')
 ## READ IN CONTROL SIMULATION & PRE-PROCESS
 # ATM
 atm_monthly_ctrl={}
+ts_ctrl_drift={}
+ps_ctrl_drift={}
 ts_ctrl_anom={}
 ps_ctrl_anom={}
-ts_ctrl_anom_std={}
-ts_ctrl_anom_sem={}
+ts_ctrl_anom_std = {}
+ts_ctrl_anom_sem = {}
+
 ctrl_keys=['']
 for key in ctrl_keys:
     atm_monthly_ctrl_single_mem = {}
@@ -185,13 +184,13 @@ for key in ctrl_keys:
     atm_monthly_ctrl[key] = atm_monthly_ctrl[key].assign(TS=atm_monthly_ctrl[key]['TS']-273.15)
     atm_monthly_ctrl[key]['TS'].attrs['units'] = '°C'
     ##DRIFT CORRECTION
+    # Compute drift correction anomaly
+    ts_ctrl_drift[key] = atm_monthly_drift_clim_xr['TS'].assign_coords(time=atm_monthly_ctrl[key]['time']).mean(dim='member')
+    ps_ctrl_drift[key] = atm_monthly_drift_clim_xr['PS'].assign_coords(time=atm_monthly_ctrl[key]['time']).mean(dim='member')
     # By month climatology
     i_month=np.arange(1,13,1)
-    ts_ctrl_anom[key] = atm_monthly_ctrl[key]['TS']*1
-    ps_ctrl_anom[key] = atm_monthly_ctrl[key]['PS']*1
-    for month in i_month:
-        ts_ctrl_anom[key].loc[{'time':[t for t in pd.to_datetime(ts_ctrl_anom[key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean.sel(month=month)
-        ps_ctrl_anom[key].loc[{'time':[t for t in pd.to_datetime(ps_ctrl_anom[key].time.values) if t.month==month]}]-=ps_clim_ensemble_mean.sel(month=month)
+    ts_ctrl_anom[key] = atm_monthly_ctrl[key]['TS'] - ts_ctrl_drift[key]
+    ps_ctrl_anom[key] = atm_monthly_ctrl[key]['PS'] - ps_ctrl_drift[key]
     ts_ctrl_anom[key].attrs['units']='\N{DEGREE SIGN}C'
     ps_ctrl_anom[key].attrs['units']='Pa'
     # Compute standard deviation
@@ -208,10 +207,7 @@ temp_ctrl_anom_sem={}
 ctrl_keys=['']
 
 for key in ctrl_keys:
-    ocn_monthly_ctrl_single_mem = {}
-    # Experiment number
-    exp_num = intersect_members[0][:-4]
-    path = os.path.join('/_data/realtime/ocn_processed', exp_num)
+    path = os.path.join('/_data/realtime/ocn_processed')
     # Read in ensemble and time averaged data
     ocn_monthly_ctrl[key] = fun.reorient_netCDF(xr.open_dataset(path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+intersect_members[0][-3:]+'-'+intersect_members[-1][-3:]+'.nc'))
     # Unit correction
@@ -221,8 +217,7 @@ for key in ctrl_keys:
     # Convert TAUX dyne/cm2 to Pa
     ocn_monthly_ctrl[key]['TAUX'] = ocn_monthly_ctrl[key]['TAUX']*(100**2)
     ocn_monthly_ctrl[key]['TAUX'].attrs['units'] = 'Pa'
-    ##DRIFT CORRECTION
-    # By month climatology
+    ## Calculate anomaly from historical climatology
     i_month=np.arange(1,13,1)
     temp_ctrl_anom[key] = ocn_monthly_ctrl[key]['TEMP']*1
     for month in i_month:
@@ -240,8 +235,9 @@ for key in ctrl_keys:
 atm_monthly_mcb={}
 ts_mcb_anom={}
 ps_mcb_anom={}
-ts_mcb_anom_std={}
-ts_mcb_anom_sem={}
+ts_mcb_anom_std = {}
+ts_mcb_anom_sem = {}
+
 for key in mcb_keys:
     atm_monthly_mcb_single_mem = {}
     for m in mcb_sims[key]:
@@ -273,11 +269,8 @@ for key in mcb_keys:
     ##DRIFT CORRECTION
     # By month climatology
     i_month=np.arange(1,13,1)
-    ts_mcb_anom[key] = atm_monthly_mcb[key]['TS']*1
-    ps_mcb_anom[key] = atm_monthly_mcb[key]['PS']*1
-    for month in i_month:
-        ts_mcb_anom[key].loc[{'time':[t for t in pd.to_datetime(ts_mcb_anom[key].time.values) if t.month==month]}]-=ts_clim_ensemble_mean.sel(month=month)
-        ps_mcb_anom[key].loc[{'time':[t for t in pd.to_datetime(ps_mcb_anom[key].time.values) if t.month==month]}]-=ps_clim_ensemble_mean.sel(month=month)
+    ts_mcb_anom[key] = atm_monthly_mcb[key]['TS'] - ts_ctrl_drift['']
+    ps_mcb_anom[key] = atm_monthly_mcb[key]['PS'] - ps_ctrl_drift['']
     ts_mcb_anom[key].attrs['units']='\N{DEGREE SIGN}C'
     ps_mcb_anom[key].attrs['units']='Pa'
     # Compute standard deviation
@@ -292,10 +285,6 @@ temp_mcb_anom={}
 temp_mcb_anom_std={}
 temp_mcb_anom_sem={}
 for key in mcb_keys:
-    ocn_monthly_mcb_single_mem = {}
-    # Experiment number
-    exp_num = mcb_sims[key][0][:-4]
-    path = os.path.join('/_data/MCB/ocn_processed', exp_num)
     # Read in ensemble and time averaged data
     ocn_monthly_mcb[key] = fun.reorient_netCDF(xr.open_dataset(path+'/b.e21.BSMYLE.f09_g17.2015-05.TEMP.'+mcb_sims[key][0][-3:]+'-'+mcb_sims[key][-1][-3:]+'.nc'))
     # Unit correction
@@ -305,8 +294,7 @@ for key in mcb_keys:
     # Convert TAUX dyne/cm2 to Pa
     ocn_monthly_mcb[key]['TAUX'] = ocn_monthly_mcb[key]['TAUX']*(100**2)
     ocn_monthly_mcb[key]['TAUX'].attrs['units'] = 'Pa'
-    ##DRIFT CORRECTION
-    # By month climatology
+    ## Calculate anomaly from historical climatology
     i_month=np.arange(1,13,1)
     temp_mcb_anom[key] = ocn_monthly_mcb[key]['TEMP']*1
     for month in i_month:
@@ -356,7 +344,7 @@ for key in mcb_keys:
         ocn_monthly_ensemble_anom[key][varname].attrs['units'] = ocn_monthly_ctrl[ctrl_keys[0]][varname].units
 
 
-## RETRIEVE AND GENERATE ANALYSIS AREA MASKS
+#%% DEFINE MASKS
 # Get overlay mask files (area is the same for all of them so can just pick one)
 seeding_mask = fun.reorient_netCDF(xr.open_dataset('/_data/sesp_mask_CESM2_0.9x1.25_v3.nc'))
 
@@ -524,6 +512,60 @@ etherm_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
                                 (zeros_mask.lon>=lon_min) & (zeros_mask.lon<=lon_max),\
                                 1,zeros_mask)
 
+# ATM Equatoral Pacific (Hovmoller)
+# W. Pacific (-2 to 2; 140 to 180)
+lat_max = 2
+lat_min = -2
+lon_WP_max = 180
+lon_WP_min = 140
+# Generate Niño 4 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = atm_monthly_ctrl[ctrl_keys[0]].TS.isel(member=0, time=0)*0
+eq_WP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_WP_min) & (zeros_mask.lon<=lon_WP_max),\
+                                1,zeros_mask)
+# E. Pacific (-2 to 2; -180 to -90)
+lat_max = 2
+lat_min = -2
+lon_max = -90
+lon_min = -180
+# Generate box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = atm_monthly_ctrl[ctrl_keys[0]].TS.isel(member=0, time=0)*0
+eq_EP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_min) & (zeros_mask.lon<=lon_max),\
+                                1,zeros_mask)
+eq_pac_mask = eq_WP_mask + eq_EP_mask
+
+# OCN Equatoral Pacific (Hovmoller)
+# W. Pacific (-2 to 2; 140 to 180)
+lat_max = 2
+lat_min = -2
+lon_WP_max = 180
+lon_WP_min = 140
+# Generate Niño 4 box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = ocn_monthly_ctrl[ctrl_keys[0]].TEMP.isel(member=0, time=0)*0
+eq_WP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_WP_min) & (zeros_mask.lon<=lon_WP_max),\
+                                1,zeros_mask)
+# E. Pacific (-2 to 2; -180 to -90)
+lat_max = 2
+lat_min = -2
+lon_max = -90
+lon_min = -180
+# Generate box with lat/lon bounds and ocean grid cells only consisting of 1s and 0s
+zeros_mask = ocn_monthly_ctrl[ctrl_keys[0]].TEMP.isel(member=0, time=0)*0
+eq_EP_mask = xr.where((zeros_mask.lat>=lat_min) & (zeros_mask.lat<=lat_max) &\
+                                (zeros_mask.lon>=lon_min) & (zeros_mask.lon<=lon_max),\
+                                1,zeros_mask)
+eq_pac_ocn_mask = eq_WP_mask + eq_EP_mask
+
+# # Plot regions to check they are defined correctly
+plot_proj = ccrs.Robinson(central_longitude=180)
+x = eq_pac_ocn_mask.isel(z_t=0)
+plt.figure(figsize=(8,6));
+ax = plt.subplot(2,2,1, projection=plot_proj,transform=plot_proj)
+p = x.plot.contourf(ax=ax,vmin=0,vmax=1,cmap='viridis',transform= ccrs.PlateCarree(),levels=3,cbar_kwargs={'orientation':'horizontal'});
+ax.coastlines(color='grey'); p.axes.set_global();
+
 
 #%% CALCULATE SOI
 # Define function
@@ -554,6 +596,9 @@ for key in mcb_keys:
     if month_init=='05':
         soi_djf_mcb[key] = round(float((soi_mcb[key].isel(time=slice(7,10))).mean(dim='time').values),3)
 
+round(float((soi_ctrl.isel(time=slice(7,10))).mean(dim='time').values),3)
+
+
 #%% CALCULATE WALKER CIRCULATION STRENGTH INDEX
 # Control - Climatology
 cepac_ctrl = fun.calc_weighted_mean_tseries(ps_ctrl_anom[''].where(cepac_mask>0,drop=True))
@@ -571,6 +616,7 @@ for key in mcb_keys:
     walker_index_anom[key] = (cepac_mcb-iowpac_mcb).mean(dim='member') 
     if month_init=='05':
         walker_index_djf_anom[key] = round(float((walker_index_anom[key].isel(time=slice(7,10))).mean(dim='time').values),2)
+
 
 #%% CALCULATE THERMOCLINE SLOPE INDEX
 # Set depth interpolation level to 500 m
@@ -661,6 +707,7 @@ nino34_ts_ctrl_upper_plot = nino34_ts_ctrl+nino34_ts_ctrl_sem
 
 
 # Plot time series
+# Colormaps created w/ colorbrewer (https://colorbrewer2.org/#type=qualitative&scheme=Accent&n=7)
 mcb_colors = {'':'#a50f15','06-02':'#a50f15','06-08':'#a50f15','06-11':'#a50f15','09-02':'#ef3b2c','09-11':'#ef3b2c','12-02':'#fc9272'} # reds=start month
 mcb_linestyle = {'':'solid','06-02':'solid','06-08':(0, (1, 1)),'06-11':'dashed','09-02':'dashed','09-11':(0, (1, 1)),'12-02':(0, (1, 1))} # linestyle=duration
 # Subset MCB window
@@ -672,15 +719,22 @@ spec = fig.add_gridspec(5,1)
 ## WALKER CELL STRENGTH
 ax0 = fig.add_subplot(spec[0:2, 0])
 # Control
+# SHIFT TIME SERIES TO START AT 0
+plot_xr = walker_index_ctrl - walker_index_ctrl[0]
+plot_sem_lower = walker_index_ctrl_lower_plot - walker_index_ctrl[0]
+plot_sem_upper = walker_index_ctrl_upper_plot - walker_index_ctrl[0]
 # PLOT 2 STANDARD ERRORS
-plt.fill_between(walker_index_ctrl.time, walker_index_ctrl_lower_plot, walker_index_ctrl_upper_plot,color='k', alpha=0.2)
+plt.fill_between(walker_index_ctrl.time, plot_sem_lower, plot_sem_upper,color='k', alpha=0.2)
 # PLOT ENSEMBLE MEAN
-plt.plot(walker_index_ctrl.time,walker_index_ctrl,color='k',linewidth=3,label='Control');
+plt.plot(walker_index_ctrl.time,plot_xr,color='k',linewidth=3,label='Control');
+# MCB
 for key in mcb_keys:
+    # SHIFT TIME SERIES TO START AT 0
+    plot_xr = walker_index_anom[key] - walker_index_anom[key][0]
     # PLOT ENSEMBLE MEAN
-    plt.plot(walker_index_anom[key].time,walker_index_anom[key],color=mcb_colors[key],linestyle=mcb_linestyle[key],linewidth=3,label='MCB '+key);
+    plt.plot(walker_index_anom[key].time,plot_xr,color=mcb_colors[key],linestyle=mcb_linestyle[key],linewidth=3,label='MCB '+key);
 # PLOT AESTHETICS
-plt.ylim(-400,200); #2015
+plt.ylim(-300,400); #2015
 # plt.ylim(-350,250); #1997
 plt.axhline(0,linestyle='--',color='k');
 # PLOT PEAK ENSO DJF
@@ -694,22 +748,27 @@ ax=plt.gca()
 ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
 ax.set_xticklabels([])
 plt.ylabel(r'$\Delta$Walker cell strength (Pa)', fontsize=12);
-plt.title('a', fontsize=14, fontweight='bold',loc='left');
+plt.title('A', fontsize=14, fontweight='bold',loc='left');
 
 ## THERMOCLINE SLOPE
 ax1 = fig.add_subplot(spec[2:4, 0])
 # Control
+# SHIFT TIME SERIES TO START AT 0
+plot_xr = z20_anom_df.loc[z20_anom_df['experiment']=='Control']['TEMP'] - z20_anom_df.loc[z20_anom_df['experiment']=='Control']['TEMP'][0]
+plot_sem_lower = z20_ctrl_anom_lower_plot - z20_anom_df.loc[z20_anom_df['experiment']=='Control']['TEMP'][0]
+plot_sem_upper = z20_ctrl_anom_upper_plot - z20_anom_df.loc[z20_anom_df['experiment']=='Control']['TEMP'][0]
 # PLOT 2 STANDARD ERRORS
-plt.fill_between(z20_ctrl_anom_lower_plot.time, z20_ctrl_anom_lower_plot, z20_ctrl_anom_upper_plot,color='k', alpha=0.2)
+plt.fill_between(z20_ctrl_anom_lower_plot.time, plot_sem_lower, plot_sem_upper,color='k', alpha=0.2)
 # PLOT ENSEMBLE MEAN
-plt.plot(z20_anom_df.loc[z20_anom_df['experiment']=='Control']['time'], z20_anom_df.loc[z20_anom_df['experiment']=='Control']['TEMP'],linestyle='solid', c='k',linewidth=3,label='Control');
+plt.plot(z20_anom_df.loc[z20_anom_df['experiment']=='Control']['time'],plot_xr,linestyle='solid', c='k',linewidth=3,label='Control');
 # MCB
-# mcb_keys = ['06-02','12-02'] #UNCOMMENT FOR 06-02 and 12-02 experiments only
 for key in mcb_keys:
+    # SHIFT TIME SERIES TO START AT 0
+    plot_xr = z20_anom_df.loc[z20_anom_df['experiment']==key]['TEMP'] - z20_anom_df.loc[z20_anom_df['experiment']==key]['TEMP'].reset_index(drop=True)[0]
     # PLOT ENSEMBLE MEAN
-   plt.plot(z20_anom_df.loc[z20_anom_df['experiment']==key]['time'], z20_anom_df.loc[z20_anom_df['experiment']==key]['TEMP'],linestyle=mcb_linestyle[key], c=mcb_colors[key],linewidth=3,label='MCB '+key);
+    plt.plot(z20_anom_df.loc[z20_anom_df['experiment']==key]['time'], plot_xr,linestyle=mcb_linestyle[key], c=mcb_colors[key],linewidth=3,label='MCB '+key);
 # PLOT AESTHETICS
-plt.ylim(-45,35); #2015
+plt.ylim(-10,80); #2015
 # plt.ylim(-50,55); #1997
 plt.axhline(0,linestyle='--',color='k');
 # PLOT PEAK ENSO DJF
@@ -727,7 +786,8 @@ for label in ax.get_xticklabels(which='major'):
     label.set(rotation=30, horizontalalignment='right')
 plt.xlabel('Time',fontsize=12); 
 plt.ylabel('Thermocline slope index (m)', fontsize=12);
-plt.title('b', fontsize=14, fontweight='bold',loc='left');
+plt.title('B', fontsize=14, fontweight='bold',loc='left');
+
 
 ### Add legend 
 ax4 = fig.add_subplot(spec[4, 0])
@@ -754,13 +814,14 @@ plt.setp(ax4.spines.values(), color=None);
 
 
 
-#%%  3 PANEL FIG 3: SLP, SST, Z20 PLOTS
+
+#%% FIGURE 3: SLP, SST, Z20 PLOTS
 ## DJF SLP bar graph
 # Subset raw SLP for each region for Walker index
 # CLIMATOLOGY
-t1 = ps_clim_ensemble_mean
-slp_cepac_clim= fun.calc_weighted_mean_tseries(t1.where(cepac_mask>0,drop=True)).loc[{'month':[t for t in t1.month.values if (t==12)|(t==1)|(t==2)]}].mean().values/100
-slp_iowpac_clim = fun.calc_weighted_mean_tseries(t1.where(iowpac_mask>0,drop=True)).loc[{'month':[t for t in t1.month.values if (t==12)|(t==1)|(t==2)]}].mean().values/100
+t1 = ps_ctrl_drift['']
+slp_cepac_clim= fun.calc_weighted_mean_tseries(t1.where(cepac_mask>0,drop=True)).loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].mean().values/100
+slp_iowpac_clim = fun.calc_weighted_mean_tseries(t1.where(iowpac_mask>0,drop=True)).loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].mean().values/100
 # CONTROL
 t1 = atm_monthly_ctrl[''].PS.mean(dim='member').isel(time=slice(4,16))
 slp_cepac_control= fun.calc_weighted_mean_tseries(t1.where(cepac_mask>0,drop=True)).loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].mean().values/100
@@ -779,8 +840,7 @@ slp_values = {'Reference': (float(slp_iowpac_clim),float(slp_cepac_clim)),
 x = np.arange(len(regions))  # the label locations
 width = 0.1  # the width of the bars
 multiplier = 0
-cmap = {'Reference':'lightgray','El Niño':'#f4a582','Full effort MCB':'#92c5de'}
-# cmap = {'Reference':'lightgray','El Niño':'#f4a582','Full effort MCB':'white'}
+cmap = {'Reference':'lightgray','El Niño':'#f1a340','Full effort MCB':'#998ec3'}
 
 fig, ax = plt.subplots(figsize=(10,3),layout='constrained')
 for attribute, measurement in slp_values.items():
@@ -791,7 +851,6 @@ for attribute, measurement in slp_values.items():
 
 # Add some text for labels, title and custom x-axis tick labels, etc.
 ax.set_ylabel('Sea-level pressure (hPa)',fontsize=14);
-# ax.set_title('a', fontsize=14, fontweight='bold',loc='left');
 ax.tick_params(labelsize=12);
 ax.legend(loc='upper left',fontsize=14);
 ax.set_ylim(100000/100, 101200/100);
@@ -803,11 +862,10 @@ ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 ax.spines["bottom"].set_visible(False)
 
-
 ## DJF TS contour map
 # CLIMATOLOGY
-t1 = ts_clim_ensemble_mean
-ts_clim_plot = fun.weighted_temporal_mean_clim(t1.loc[{'month':[t for t in t1.month.values if (t==12)|(t==1)|(t==2)]}])
+t1 = ts_ctrl_drift['']
+ts_clim_plot = fun.weighted_temporal_mean_clim(t1.loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].groupby('time.month').mean())
 # CONTROL
 t1 = ts_ctrl_anom[''].mean(dim='member').isel(time=slice(4,16))
 ts_control_plot = fun.weighted_temporal_mean_clim(t1.loc[{'time':[t for t in pd.to_datetime(t1.time.values) if (t.month==12)|(t.month==1)|(t.month==2)]}].groupby('time.month').mean())
@@ -819,6 +877,109 @@ ts_fullmcb_plot = fun.weighted_temporal_mean_clim(t1.loc[{'time':[t for t in pd.
 ts_fullmcb_plot = xr.where(landmask<0.1,ts_fullmcb_plot,np.nan )
 
 ## CREATE 3D map
+def add_contourf3d(ax, contour_set):
+    proj_ax = contour_set.collections[0].axes
+    for zlev, collection in zip(contour_set.levels, contour_set.collections):
+        paths = collection.get_paths()
+        # Figure out the matplotlib transform to take us from the X, Y
+        # coordinates to the projection coordinates.
+        trans_to_proj = collection.get_transform() - proj_ax.transData
+
+        paths = [trans_to_proj.transform_path(path) for path in paths]
+        verts = [path.vertices for path in paths]
+        codes = [path.codes for path in paths]
+        pc = PolyCollection([])
+        pc.set_verts_and_codes(verts, codes)
+
+        # Copy all of the parameters from the contour (like colors) manually.
+        # Ideally we would use update_from, but that also copies things like
+        # the transform, and messes up the 3d plot.
+        pc.set_facecolor(collection.get_facecolor())
+        pc.set_edgecolor(collection.get_edgecolor())
+        pc.set_alpha(collection.get_alpha())
+
+        ax3d.add_collection3d(pc, zs=0)
+
+    # Update the limit of the 3d axes based on the limit of the axes that
+    # produced the contour.
+    proj_ax.autoscale_view()
+
+    ax3d.set_xlim(*proj_ax.get_xlim())
+    ax3d.set_ylim(*proj_ax.get_ylim())
+    # ax3d.set_zlim(Z.min(), Z.max())
+
+
+def add_contour3d(ax, contour_set):
+    proj_ax = contour_set.collections[0].axes
+    for zlev, collection in zip(contour_set.levels, contour_set.collections):
+        paths = collection.get_paths()
+        # Figure out the matplotlib transform to take us from the X, Y
+        # coordinates to the projection coordinates.
+        trans_to_proj = collection.get_transform() - proj_ax.transData
+
+        paths = [trans_to_proj.transform_path(path) for path in paths]
+        verts = [path.vertices for path in paths]
+        codes = [path.codes for path in paths]
+        pc = PolyCollection([])
+        pc.set_verts_and_codes(verts, codes)
+
+        # Copy all of the parameters from the contour (like colors) manually.
+        # Ideally we would use update_from, but that also copies things like
+        # the transform, and messes up the 3d plot.
+        pc.set_facecolor((1,1,1,0))
+        pc.set_edgecolor(collection.get_edgecolor())
+        pc.set_alpha(collection.get_alpha())
+        pc.set_linestyle(collection.get_linestyle())
+        pc.set_linewidth(collection.get_linewidth())
+
+        ax3d.add_collection3d(pc, zs=0)
+
+    # Update the limit of the 3d axes based on the limit of the axes that
+    # produced the contour.
+    proj_ax.autoscale_view()
+
+    ax3d.set_xlim(*proj_ax.get_xlim())
+    ax3d.set_ylim(*proj_ax.get_ylim())
+    # ax3d.set_zlim(Z.min(), Z.max())
+
+def add_feature3d(ax, feature, clip_geom=None, zs=None):
+    """
+    Add the given feature to the given axes.
+    """
+    concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
+
+    target_projection = ax.projection
+    geoms = list(feature.geometries())
+
+    if target_projection != feature.crs:
+        # Transform the geometries from the feature's CRS into the
+        # desired projection.
+        geoms = [target_projection.project_geometry(geom, feature.crs)
+                 for geom in geoms]
+
+    if clip_geom:
+        # Clip the geometries based on the extent of the map (because mpl3d
+        # can't do it for us)
+        geoms = [geom.intersection(clip_geom) for geom in geoms]
+
+    # Convert the geometries to paths so we can use them in matplotlib.
+    paths = concat(geos_to_path(geom) for geom in geoms)
+
+    # Bug: mpl3d can't handle edgecolor='face'
+    kwargs = feature.kwargs
+    if kwargs.get('edgecolor') == 'face':
+        kwargs['edgecolor'] = 'k'
+        kwargs['facecolor'] = 'grey'
+    polys = concat(path.to_polygons(closed_only=False) for path in paths)
+
+    if kwargs.get('facecolor', 'none') == 'none':
+        lc = LineCollection(polys, **kwargs)
+    else:
+        lc = PolyCollection(polys, closed=False,**kwargs)
+    ax3d.add_collection3d(lc, zs=zs)
+
+
+
 # Remove white line for plotting over Pacific Ocean.
 plot_proj = ccrs.PlateCarree(central_longitude=180)
 # Control contourf
@@ -852,24 +1013,24 @@ cs = proj_ax.contourf(lon, lat, ts_control_plot_reorient,cmap='RdBu_r',vmin=-3,v
 # Create MCB TS contours
 cs2 = proj_ax.contour(lon, lat, ts_fullmcb_plot_reorient,levels=levels,cmap='RdBu_r',linewidths=2, transform=ccrs.PlateCarree())
 # Create Thermocline region
-cs3 = proj_ax.contour(tim_plot_reorient.lon,tim_plot_reorient.lat,tim_plot_reorient.isel(z_t=0), transform= ccrs.PlateCarree(),levels=np.linspace(0,1,2), colors='k',linestyles='--',linewidths=1.5)
+cs3 = proj_ax.contour(tim_plot_reorient.lon,tim_plot_reorient.lat,tim_plot_reorient.isel(z_t=0), transform= ccrs.PlateCarree(),levels=np.linspace(0,1,2), colors='#999999',linestyles='--',linewidths=1.5)
 # Create Walker regions
 cs4 = proj_ax.contour(iowpac_plot_reorient.lon,iowpac_plot_reorient.lat,iowpac_plot_reorient, transform= ccrs.PlateCarree(),levels=np.linspace(0,1,2), colors='k',linewidths=1.5)
 cs5 = proj_ax.contour(cepac_plot_reorient.lon,cepac_plot_reorient.lat,cepac_plot_reorient, transform= ccrs.PlateCarree(),levels=np.linspace(0,1,2), colors='k',linewidths=1.5)
 
 # Add 2D geocontours to 3D map
 ax3d.projection = proj_ax.projection
-fun.add_contourf3d(ax3d, cs)
-fun.add_contour3d(ax3d, cs2)
-fun.add_contour3d(ax3d, cs3)
-fun.add_contour3d(ax3d, cs4)
-fun.add_contour3d(ax3d, cs5)
+add_contourf3d(ax3d, cs)
+add_contour3d(ax3d, cs2)
+add_contour3d(ax3d, cs3)
+add_contour3d(ax3d, cs4)
+add_contour3d(ax3d, cs5)
 
 # Use the convenience (private) method to get the extent as a shapely geometry.
 clip_geom = proj_ax._get_extent_geom().buffer(0)
 # Add land features to the bottom z level
 zbase = 0
-fun.add_feature3d(ax3d, cartopy.feature.LAND,clip_geom=clip_geom, zs=zbase)
+add_feature3d(ax3d, cartopy.feature.LAND,clip_geom=clip_geom, zs=zbase)
 
 # Change axis limits
 ax3d.set_xlim(-90, 90)
@@ -919,8 +1080,8 @@ fig, ax = plt.subplots(figsize=(10,3),layout='constrained')
 ax.plot(z20_historical_tseries.lon,z20_historical_tseries.values,linewidth=4,color=cmap['Reference'],label='Reference')
 ax.plot(z20_ctrl_tseries.lon,z20_ctrl_tseries.values,linewidth=4,color=cmap['El Niño'],label='El Niño')
 ax.plot(z20_mcb_tseries.lon,z20_mcb_tseries.values,linewidth=4,color=cmap['Full effort MCB'],label='Full effort MCB')
-ax.vlines(120,ymin=30,ymax=220,linewidth=3,linestyle='dashed',color='k')
-ax.vlines(280,ymin=30,ymax=220,linewidth=3,linestyle='dashed',color='k')
+ax.vlines(120,ymin=30,ymax=220,linewidth=3,linestyle='dashed',color='#999999')
+ax.vlines(280,ymin=30,ymax=220,linewidth=3,linestyle='dashed',color='#999999')
 ax.set_ylabel('Depth (m)',fontsize=14);
 ax.invert_yaxis();
 plt.ylim(220,30);plt.xlim(75,285);
@@ -928,7 +1089,6 @@ ax.set_xticks([90,120,150,180,210,240,270]);
 ax.set_xticklabels(['90°E','120°E','150°E','180°E', '150°W', '120°W','90°W']);
 ax.tick_params(labelsize=12);
 ax.set_xlabel('Longitude (degrees)',fontsize=14);
-
 
 # Create ED table of ENSO indicators
 columns=['MCB_strategy','Niño3.4_SST','SOI','Walker_strength_index','Thermocline_slope_index']
@@ -939,3 +1099,163 @@ for key in mcb_exp_reordered:
     df_append = pd.DataFrame([[key, round(nino34_djf_anom,3),round(soi_djf_mcb[key],3),round(walker_index_djf_anom[key],3), round(float(z20_djf_anom_df[z20_djf_anom_df['experiment']==key]['TEMP'].values),3)]],columns=columns)
     enso_indicator_df = pd.concat([enso_indicator_df,df_append])
 enso_indicator_df = enso_indicator_df
+
+
+##% HOVMOLLER DIAGRAMS OF ZONAL WIND, SST, and THERMOCLINE DEPTH
+## CALCULATE ZONAL MEANS
+## EQUATOR (2S to 2N)
+# SURFACE ZONAL WIND
+# CONTROL
+ctrl_u_eq_pac = atm_monthly_ctrl['']['U'].isel(lev=-1).mean(dim='member').where(eq_pac_mask>0,drop=True).mean(dim='lat')
+# Reorient lon for plotting
+ctrl_u_eq_pac = fun.reorient_netCDF(ctrl_u_eq_pac,target=360)
+# FULL EFFORT MCB
+mcb_u_eq_pac = atm_monthly_mcb['06-02']['U'].isel(lev=-1).mean(dim='member').where(eq_pac_mask>0,drop=True).mean(dim='lat')
+# Reorient lon for plotting
+mcb_u_eq_pac = fun.reorient_netCDF(mcb_u_eq_pac,target=360)
+
+# SURFACE TEMPERATURE
+# CONTROL
+ctrl_ts_eq_pac = atm_monthly_ctrl['']['TS'].mean(dim='member').where(eq_pac_mask>0,drop=True).mean(dim='lat')
+# Reorient lon for plotting
+ctrl_ts_eq_pac = fun.reorient_netCDF(ctrl_ts_eq_pac,target=360)
+# FULL EFFORT MCB
+# CONTROL
+mcb_ts_eq_pac = atm_monthly_mcb['06-02']['TS'].mean(dim='member').where(eq_pac_mask>0,drop=True).mean(dim='lat')
+# Reorient lon for plotting
+mcb_ts_eq_pac = fun.reorient_netCDF(mcb_ts_eq_pac,target=360)
+
+# 20C ISOTHERM DEPTH ANOMALIES
+# Pick which region you want to calculate thermocline depth over
+thermocline_mask = eq_pac_ocn_mask
+# Set depth interpolation level to 500 m
+z_t_interp = np.arange(0,500)
+## Compute HISTORICAL Z20
+temp_historical_subset = temp_clim_ensemble_mean.where(thermocline_mask>0,drop=True).interpolate_na(dim='lon',fill_value='extrapolate')
+z20_historical = np.abs(temp_historical_subset.interp(z_t=z_t_interp)-20).argmin(dim='z_t')
+## Compute CONTROL Z20
+temp_ctrl_subset = ((ocn_monthly_ctrl[''].TEMP).mean(dim='member').where(thermocline_mask>0,drop=True)).interpolate_na(dim='lon',fill_value='extrapolate')
+z20_ctrl = np.abs(temp_ctrl_subset.interp(z_t=z_t_interp)-20).argmin(dim='z_t')
+## Compute FULL EFFORT MCB Z20 
+temp_mcb_subset = ((ocn_monthly_mcb['06-02'].TEMP.mean(dim=('member'))).where(thermocline_mask>0,drop=True)).interpolate_na(dim='lon',fill_value='extrapolate')
+z20_mcb = np.abs(temp_mcb_subset.interp(z_t=z_t_interp)-20).argmin(dim='z_t')
+## Compute anomalies from historical
+z20_ctrl_anom=z20_ctrl*1
+z20_mcb_anom=z20_mcb*1
+for month in i_month:
+    z20_ctrl_anom.loc[{'time':[t for t in pd.to_datetime(z20_ctrl.time.values) if t.month==month]}]-=z20_historical.sel(month=month)
+    z20_mcb_anom.loc[{'time':[t for t in pd.to_datetime(z20_mcb.time.values) if t.month==month]}]-=z20_historical.sel(month=month)
+## Reorient longitude for plotting and average over latitude
+z20_ctrl_anom_plot = fun.reorient_netCDF(z20_ctrl_anom,target=360).mean(dim=('lat'))
+z20_mcb_anom_plot = fun.reorient_netCDF(z20_mcb_anom,target=360).mean(dim=('lat'))
+
+
+
+## PLOT 3-PANEL HOVMOLLER (U,SST,20C)
+version_num=1
+fig,ax = plt.subplots(2,3,figsize=(11, 12),sharey=True,sharex=False)
+## CONTROL U
+# Set levels
+levels = np.arange(-8,9)
+p = ax[0,0].contourf(ctrl_u_eq_pac.lon,ctrl_u_eq_pac.time,ctrl_u_eq_pac.values,levels=levels,extend='both',cmap='Spectral_r');
+# Add DJF peak
+if month_init=='05':
+    ax[0,0].hlines(ctrl_u_eq_pac.time[7],xmin=ctrl_u_eq_pac.lon.min().values,xmax=ctrl_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[0,0].hlines(ctrl_u_eq_pac.time[9],xmin=ctrl_u_eq_pac.lon.min().values,xmax=ctrl_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[0,0],orientation='horizontal');
+cbar.set_label(label='Zonal wind (m/s)',fontsize=12);
+ax[0,0].invert_yaxis();
+ax[0,0].set_xticks([140,160,180,200,220,240,260]);
+ax[0,0].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[0,0].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[0,0].set_ylabel('Control',fontsize=14,fontweight='bold');ax[0,0].set_xlabel('Longitude',fontsize=12);
+ax[0,0].set_title('A',loc='left',fontweight='bold',fontsize=14);
+## CONTROL TS
+# Set levels
+levels = np.arange(20,32)
+p = ax[0,1].contourf(ctrl_ts_eq_pac.lon,ctrl_ts_eq_pac.time,ctrl_ts_eq_pac.values,levels=levels,extend='both',cmap='plasma');
+# Add DJF peak
+if month_init=='05':
+    ax[0,1].hlines(ctrl_u_eq_pac.time[7],xmin=ctrl_u_eq_pac.lon.min().values,xmax=ctrl_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[0,1].hlines(ctrl_u_eq_pac.time[9],xmin=ctrl_u_eq_pac.lon.min().values,xmax=ctrl_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[0,1],orientation='horizontal');
+cbar.set_label(label='SST (\N{DEGREE SIGN}C)',fontsize=12);
+ax[0,1].set_xticks([140,160,180,200,220,240,260]);
+ax[0,1].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[0,1].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[0,1].set_xlabel('Longitude',fontsize=12);
+ax[0,1].set_title('B',loc='left',fontweight='bold',fontsize=14);
+## CONTROL THERMOCLINE
+# Set levels
+levels = np.arange(-40,41,5)
+p = ax[0,2].contourf(z20_ctrl_anom_plot.lon,z20_ctrl_anom_plot.time,z20_ctrl_anom_plot.values,levels=levels,extend='both',cmap='PRGn');
+# Add DJF peak
+if month_init=='05':
+    ax[0,2].hlines(z20_ctrl_anom_plot.time[7],xmin=z20_ctrl_anom_plot.lon.min().values,xmax=z20_ctrl_anom_plot.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[0,2].hlines(z20_ctrl_anom_plot.time[9],xmin=z20_ctrl_anom_plot.lon.min().values,xmax=z20_ctrl_anom_plot.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[0,2],orientation='horizontal');
+cbar.set_label(label='20\N{DEGREE SIGN}C isotherm depth anomaly (m)',fontsize=12);
+ax[0,2].set_xticks([140,160,180,200,220,240,260]);
+ax[0,2].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[0,2].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[0,2].set_xlabel('Longitude',fontsize=12);
+ax[0,2].set_title('C',loc='left',fontweight='bold',fontsize=14);
+
+## MCB U
+# Set levels
+levels = np.arange(-8,9)
+p = ax[1,0].contourf(mcb_u_eq_pac.lon,mcb_u_eq_pac.time,mcb_u_eq_pac.values,levels=levels,extend='both',cmap='Spectral_r');
+# Add DJF peak
+if month_init=='05':
+    ax[1,0].hlines(mcb_u_eq_pac.time[7],xmin=mcb_u_eq_pac.lon.min().values,xmax=mcb_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[1,0].hlines(mcb_u_eq_pac.time[9],xmin=mcb_u_eq_pac.lon.min().values,xmax=mcb_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[1,0],orientation='horizontal');
+cbar.set_label(label='Zonal wind (m/s)',fontsize=12);
+ax[1,0].set_xticks([140,160,180,200,220,240,260]);
+ax[1,0].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[1,0].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[1,0].set_ylabel('Full effort MCB',fontsize=14,fontweight='bold');ax[1,0].set_xlabel('Longitude',fontsize=12);
+ax[1,0].set_title('D',loc='left',fontweight='bold',fontsize=14);
+## MCB TS
+# Set levels
+levels = np.arange(20,32)
+p = ax[1,1].contourf(mcb_ts_eq_pac.lon,mcb_ts_eq_pac.time,mcb_ts_eq_pac.values,levels=levels,extend='both',cmap='plasma');
+# Add DJF peak
+if month_init=='05':
+    ax[1,1].hlines(mcb_u_eq_pac.time[7],xmin=mcb_u_eq_pac.lon.min().values,xmax=mcb_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[1,1].hlines(mcb_u_eq_pac.time[9],xmin=mcb_u_eq_pac.lon.min().values,xmax=mcb_u_eq_pac.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[1,1],orientation='horizontal');
+cbar.set_label(label='SST (\N{DEGREE SIGN}C)',fontsize=12);
+ax[1,1].set_xticks([140,160,180,200,220,240,260]);
+ax[1,1].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[1,1].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[1,1].set_xlabel('Longitude',fontsize=12);
+ax[1,1].set_title('E',loc='left',fontweight='bold',fontsize=14);
+## MCB THERMOCLINE
+# Set levels
+levels = np.arange(-40,41,5)
+p = ax[1,2].contourf(z20_mcb_anom_plot.lon,z20_mcb_anom_plot.time,z20_mcb_anom_plot.values,levels=levels,extend='both',cmap='PRGn');
+# Add DJF peak
+if month_init=='05':
+    ax[1,2].hlines(z20_mcb_anom_plot.time[7],xmin=z20_mcb_anom_plot.lon.min().values,xmax=z20_mcb_anom_plot.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+    ax[1,2].hlines(z20_mcb_anom_plot.time[9],xmin=z20_mcb_anom_plot.lon.min().values,xmax=z20_mcb_anom_plot.lon.max().values,color='k',linestyle='dashed',linewidth=2);
+cbar = fig.colorbar(p,ax=ax[1,2],orientation='horizontal');
+cbar.set_label(label='20\N{DEGREE SIGN}C isotherm depth anomaly (m)',fontsize=12);
+ax[1,2].set_xticks([140,160,180,200,220,240,260]);
+ax[1,2].set_xticklabels(['140°E','160°E','180°E', '160°W', '140°W','120°W','100°W']);
+# Rotates and right-aligns the x labels so they don't crowd each other.
+for label in ax[1,2].get_xticklabels(which='major'):
+    label.set(rotation=30, horizontalalignment='right')
+ax[1,2].set_xlabel('Longitude',fontsize=12);
+ax[1,2].set_title('F',loc='left',fontweight='bold',fontsize=14);
+plt.tight_layout();
