@@ -862,3 +862,26 @@ plt.tight_layout();
 
 
 
+#%% CALCULATE POP WEIGHTED T AND P ANOMALIES (for Table S2)
+## Read in pop data
+# Read in regridded population data (as used in Wan et al., 2024)
+## 2010 ##
+wd = '/_data/pop_data/gpw-v4-population-count-rev11_totpop_30_min_nc/'
+regrid_pop_count = xr.open_dataset(wd+'gpw-v4-population-count-rev11_totpop_192x288.nc')
+pop_count = regrid_pop_count.sel(time=2015).pop_count
+# Turn ocean values to nan
+landmask = atm_monthly_ctrl['']['LANDFRAC'].isel(time=0,member=0).load()
+pop_count_subset = xr.where((landmask>0.1), pop_count, np.nan)
+# Compute GDP weights
+pop_wt = pop_count_subset/np.nansum(pop_count_subset)
+
+## Weight absolute T and P anomalies by global population and compute global sum of weighted anomalies for each MCB case
+# MCB
+ts_mcb_abs_anom_pop_wt = {}
+prect_mcb_abs_anom_pop_wt = {}
+for key in mcb_keys:
+    ts_mcb_abs_anom_pop_wt[key] = np.nansum(np.abs(ts_mcb_anom_jun_aug[key])*pop_wt)
+    prect_mcb_abs_anom_pop_wt[key] = np.nansum(np.abs(prect_mcb_anom_jun_aug[key])*pop_wt)
+
+
+

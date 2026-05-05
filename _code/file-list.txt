@@ -1,6 +1,8 @@
-atm_analysis.py : script to analyze and plot CESM2 atmosphere (cam) output in _data/. Produces Fig. 2, S1, S2, S3, S4.
-enso_impacts.py : script to define El Niño impact regions and and calculate MCB response to each impact region. Produces Fig. 4, S6.
-enso_mechanisms.py : script to calculate El Niño growth and decay metrics. Produces Fig. 3, S5.
+atm_analysis.py : script to analyze and plot CESM2 atmosphere (cam) output in _data/. Produces Fig. 2, S3-S9, S13-S14, S18.
+enso_impacts.py : script to define El Niño impact regions and and calculate MCB response to each impact region. Produces Fig. 4, S16-S17
+enso_mechanisms.py : script to calculate El Niño growth and decay metrics. Produces Fig. 3, S10, S11.
 function_dependencies.py : stores functions used in all analysis scripts in _code/ 
-smyle_aus_mcb.py : script to analyze and compare SMYLE-MCB La Niña experiment to SMYLE-AUFIRE experiment. Produces Fig. 1.
-eindex_calc.py: script to calculate E-index and C-index from SST EOFs for C&M replication analysis. Produces Fig S7.
+smyle_aus_mcb.py : script to analyze and compare SMYLE-MCB La Niña experiment to SMYLE-AUFIRE experiment. Produces Fig. 1, S1, S2.
+eindex_calc.py: script to calculate E-index and C-index from SST EOFs for C&M replication analysis. Produces Fig S19.
+spmm_npmm_analysis.py: script to calculate SPMM and NPMM indices from historical SMYLE-FOSI SSTs. Produces Fig S15.
+ocn_heat_budget.py: script to compare net surface heat flux anomaly and upper ocean heat content for SMYLE/MCB simulations. Produces Fig S12. 
