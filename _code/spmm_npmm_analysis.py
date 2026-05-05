@@ -1,7 +1,6 @@
 ### PURPOSE: Script to calculate E/C indices from surface temperature EOFs
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
 ### DATE CREATED: 05/05/2026
-
 ##################################################################################################################
 #%% IMPORT LIBRARIES, DATA, AND FORMAT
 # Import libraries
