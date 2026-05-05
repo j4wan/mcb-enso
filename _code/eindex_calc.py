@@ -1,7 +1,7 @@
 ### PURPOSE: Script to calculate E/C indices from surface temperature EOFs
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
-### DATE CREATED: 08/27/2024
-### LAST MODIFIED: 09/06/2024
+### DATE CREATED: 05/05/2026
+
 
 ### Note: script adapted from smyle_fosi_eindex_v3.py
 ##################################################################################################################
@@ -520,7 +520,6 @@ for key in mcb_keys:
 
 
 ## Plot EOF comparisons for historical and appended MCB timeseries
-version_num = 1
 plot_labels = ['a','b','c','d','e','f','g','h','j','k','l','m','n','o']
 mcb_legend_label = {'06-02':'Jun-Feb','06-08':'Jun-Aug','06-11':'Jun-Nov','09-02':'Sep-Feb','09-11':'Sep-Nov','12-02':'Dec-Feb'}
 fig=plt.figure(figsize=(6,14));
@@ -594,7 +593,6 @@ if year_init=='1997':
 elif year_init=='2015':
     peak_yrs = [2015,2016]
 
-version_num = 1
 mcb_colors = {'Control':'k','06-02':'#a50f15','06-08':'#a50f15','06-11':'#a50f15','09-02':'#ef3b2c','09-11':'#ef3b2c','12-02':'#fc9272'} # reds=start month
 mcb_marker =  {'Control':'o','06-02':'*','06-08':'^','06-11':'P','09-02':'P','09-11':'^','12-02':'^'} # duration
 mcb_legend_label = {'06-02':'Jun-Feb','06-08':'Jun-Aug','06-11':'Jun-Nov','09-02':'Sep-Feb','09-11':'Sep-Nov','12-02':'Dec-Feb'}
@@ -613,7 +611,7 @@ plt.grid(linestyle='--');
 plt.axvline(0,linewidth=2,c='k');plt.axhline(0,linewidth=2,c='k');
 plt.annotate(year_init+' El Niño',fontsize=12, xy=(.4,1.03), xycoords='axes fraction',color='k');
 if year_init == '2015':
-    plt.title('a',fontweight='bold',fontsize=14,loc='left');
+    plt.title('A',fontweight='bold',fontsize=14,loc='left');
     plt.legend(loc='lower right');
 elif year_init == '1997':
-    plt.title('b',fontweight='bold',fontsize=14,loc='left');
+    plt.title('B',fontweight='bold',fontsize=14,loc='left');
