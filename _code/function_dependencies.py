@@ -1,6 +1,6 @@
 ### PURPOSE: Script to store functions used in all analysis scripts in _code/
 ### AUTHOR: Jessica Wan (j4wan@ucsd.edu)
-### DATE CREATED: 05/28/2024
+### DATE CREATED: 05/05/2026
 
 
 ### TABLE OF CONTENTS ### -------------------------------------------------------------
@@ -14,9 +14,9 @@
 # 8) weighted_temporal_mean: calculate day-weighted mean
 # 9) plot_nino_maps: plot surface temperature and ocean potential temperature cross-section
 # 10) moving_average: calculate moving average
-# 11) add_contourf3d: create contourf 3d plot
-# 12) add_contour3d: create contour 3d plot
-# 13) add_feature3d: Add the given feature to the given axes.
+# 11) calc_weights_EOFs: calculate area-weighting matrix for EOF
+# 12) calc_EOFs: calculate EOFs for xarray dataset
+# 13) xarray_linear_detrend: linearly detrend xarray
 ### ------------------------------------------------------------------------------- ###
 
 
@@ -34,10 +34,8 @@ from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
 import cartopy.io.shapereader as shpreader
 from matplotlib import ticker
-from cartopy.mpl.patch import geos_to_path
-import itertools
-import mpl_toolkits.mplot3d
-from matplotlib.collections import PolyCollection, LineCollection
+from eofs.xarray import Eof
+import gsw
 
 
 
@@ -93,7 +91,7 @@ def dateshift_netCDF(fp):
 
 
 # 4) plot_panel_maps: plot maps of global/regional monthly means/anomalies by subplot panel
-def plot_panel_maps(in_xr,cmin, cmax, ccmap, plot_zoom,central_lon=0,projection = 'PlateCarree',CI_in='none',CI_level='none',CI_display='none', nrow=1, ncol=1, subplot_num=0, mean_val='none',cbar=True):
+def plot_panel_maps(in_xr,cmin, cmax, ccmap, plot_zoom,central_lon=0,projection = 'PlateCarree',CI_in='none',CI_level='none',CI_display='none', nrow=1, ncol=1, subplot_num=0, mean_val='none',cbar=True,continent_fill=False):
     """
     Function to plot maps of global/regional ensemble mean and anomalies
     :param in_xr: xarray w/ dims [lat,lon] representing annual mean/anomaly
@@ -103,13 +101,15 @@ def plot_panel_maps(in_xr,cmin, cmax, ccmap, plot_zoom,central_lon=0,projection 
     :param plot_zoom: string to specify zoom of plot ('global','conus', 'west_coast', 'pacific_ocean')
     :param central_lon: float specifying central longitude for plotting (default=0) If central_lon=180, need to add cyclical point to remove white line
     :param projection: string specifying plot projection. Regional facets only work for PlateCarree. Default is PlateCarree.
-:param CI_in: xarray w/ same dims as in_xr specifying 1's where the grid cells are significant to the CI and 0's elsewhere. Default is None.
+    :param CI_in: xarray w/ same dims as in_xr specifying 1's where the grid cells are significant to the CI and 0's elsewhere. Default is None.
     :param CI_level: float specifying signficance level for plotting.
     :param CI_display: string specifying how to show CI (default='none'). Options include stippling significant pixels, inverted stippling where insignficant pixels are stippled, or masking out insignificant pixels.
     :param nrow: int specifying number of rows for subplot.
     :param ncol: int specifying number of cols for subplot.
     :param subplot_num: int specifying which subplot panel you are plotting.
     :param mean_val: default is none. If not, specify array(mean, std) to put mean value in top right corner.
+    :param continent_fill: default is False. If True, color in continents.
+
     """
 
     x = in_xr
@@ -230,10 +230,12 @@ def plot_panel_maps(in_xr,cmin, cmax, ccmap, plot_zoom,central_lon=0,projection 
         ax.coastlines()
         # fig.subplots_adjust(bottom=0.2, top=0.92, wspace=0.1,hspace=.01);
         #cbar_ax = fig.add_axes([0.115, 0.15, 0.8, 0.05]) #rect kwargs [left, bottom, width, height];
+        if continent_fill==True:
+            p.axes.add_feature(cfeature.NaturalEarthFeature('physical','land','50m', edgecolor='k', facecolor='grey'));
         if cbar==True:
             plt.colorbar(p,orientation='horizontal', label=x.units, extend='both',pad=0.1);
         if mean_val!='none':
-            plt.title(str(round(mean_val[0],2))+ ' '+str(x.units), fontsize=10, loc = 'right');
+            plt.title(str(mean_val[0])+ ' '+str(x.units), fontsize=10, loc = 'right');
     # Central longitude is default 0.
     else:
         lat = x.lat
@@ -319,10 +321,12 @@ def plot_panel_maps(in_xr,cmin, cmax, ccmap, plot_zoom,central_lon=0,projection 
         ax.coastlines()
         #fig.subplots_adjust(bottom=0.2, top=0.92, wspace=0.1,hspace=.01);
         #cbar_ax = fig.add_axes([0.115, 0.15, 0.8, 0.05]) #rect kwargs [left, bottom, width, height];
+        if continent_fill==True:
+            p.axes.add_feature(cfeature.NaturalEarthFeature('physical','land','50m', edgecolor='k', facecolor='grey'));
         if cbar==True:
             plt.colorbar(p,orientation='horizontal', label=x.units, extend='both',pad=0.1);
         if mean_val!='none':
-            plt.title(str(round(mean_val[0],2))+ ' '+str(x.units), fontsize=10, loc = 'right');
+           plt.title(str(mean_val[0])+ ' '+str(x.units), fontsize=10, loc = 'right');
     return ax, p
 
 
@@ -510,115 +514,71 @@ def moving_average(a, n) :
     ret[n:] = ret[n:] - ret[:-n]
     return ret[n - 1:] / n
 
-# 11) add_contourf3d: create contourf 3d plot
-def add_contourf3d(ax, contour_set):
-    """
-    Function to create contourf 3d plot. 
-    Adapted from https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy
-    """
-    proj_ax = contour_set.collections[0].axes
-    for zlev, collection in zip(contour_set.levels, contour_set.collections):
-        paths = collection.get_paths()
-        # Figure out the matplotlib transform to take us from the X, Y
-        # coordinates to the projection coordinates.
-        trans_to_proj = collection.get_transform() - proj_ax.transData
 
-        paths = [trans_to_proj.transform_path(path) for path in paths]
-        verts = [path.vertices for path in paths]
-        codes = [path.codes for path in paths]
-        pc = PolyCollection([])
-        pc.set_verts_and_codes(verts, codes)
+# 11) Calculate area-weighting matrix for EOF
+def calc_weights_EOFs(data):
+    '''
+    Construct area-weighting matrix in shape of eof function input data
+    '''
+    calc_weights = list(np.cos(np.deg2rad(data.lat).values))
+    shape_weights = np.tile(calc_weights, (len(data.lon), 1))
+    weights = shape_weights.T
+    
+    return weights
 
-        # Copy all of the parameters from the contour (like colors) manually.
-        # Ideally we would use update_from, but that also copies things like
-        # the transform, and messes up the 3d plot.
-        pc.set_facecolor(collection.get_facecolor())
-        pc.set_edgecolor(collection.get_edgecolor())
-        pc.set_alpha(collection.get_alpha())
+# 12) Calculate EOFs for xarray dataset
+def calc_EOFs(ds):
+    '''
+    Calculate all EOFs of xarray dataset ds
+    ds contains variable TREFHT (as anomalies from ensemble mean) 
+     '''
+    # Apply area-weighting by latitude    
+    weights = calc_weights_EOFs(ds)
+    solver = Eof(ds, weights = weights)
 
-        ax3d.add_collection3d(pc, zs=0)
-
-    # Update the limit of the 3d axes based on the limit of the axes that
-    # produced the contour.
-    proj_ax.autoscale_view()
-
-    ax3d.set_xlim(*proj_ax.get_xlim())
-    ax3d.set_ylim(*proj_ax.get_ylim())
-    # ax3d.set_zlim(Z.min(), Z.max())
+    eofs = solver.eofs() 
+    
+    return solver, eofs 
 
 
-# 12) add_contour3d: create contour 3d plot
-def add_contour3d(ax, contour_set):
-    """
-    Function to create contour 3d plot. 
-    Adapted from https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy
-    """
-    proj_ax = contour_set.collections[0].axes
-    for zlev, collection in zip(contour_set.levels, contour_set.collections):
-        paths = collection.get_paths()
-        # Figure out the matplotlib transform to take us from the X, Y
-        # coordinates to the projection coordinates.
-        trans_to_proj = collection.get_transform() - proj_ax.transData
+# 13) Linearly detrend xarray
+# # Adapted from Callahan & Mankin (2023) Observed_ENSO_Indices.ipynb and CMIP6_ENSO_Indices
+def xarray_linear_detrend(data):
+    # detrends a three-dimensional
+    # (time,lat,lon)
+    # xarray dataarray separately at 
+    # each grid point
+    # easy to do, but slow, with a loop
+    # so this is a vectorized
+    # way of doing it 
+    # https://stackoverflow.com/questions/38960903/applying-numpy-polyfit-to-xarray-dataset
 
-        paths = [trans_to_proj.transform_path(path) for path in paths]
-        verts = [path.vertices for path in paths]
-        codes = [path.codes for path in paths]
-        pc = PolyCollection([])
-        pc.set_verts_and_codes(verts, codes)
-
-        # Copy all of the parameters from the contour (like colors) manually.
-        # Ideally we would use update_from, but that also copies things like
-        # the transform, and messes up the 3d plot.
-        pc.set_facecolor((1,1,1,0))
-        pc.set_edgecolor(collection.get_edgecolor())
-        pc.set_alpha(collection.get_alpha())
-        pc.set_linestyle(collection.get_linestyle())
-        pc.set_linewidth(collection.get_linewidth())
-
-        ax3d.add_collection3d(pc, zs=0)
-
-    # Update the limit of the 3d axes based on the limit of the axes that
-    # produced the contour.
-    proj_ax.autoscale_view()
-
-    ax3d.set_xlim(*proj_ax.get_xlim())
-    ax3d.set_ylim(*proj_ax.get_ylim())
-    # ax3d.set_zlim(Z.min(), Z.max())
-
-# 13) add_feature3d: Add the given feature to the given axes.
-def add_feature3d(ax, feature, clip_geom=None, zs=None):
-    """
-    Function to add the given feature to the given axes.
-    Adapted from https://stackoverflow.com/questions/48269014/contourf-in-3d-cartopy
-    """
-    concat = lambda iterable: list(itertools.chain.from_iterable(iterable))
-
-    target_projection = ax.projection
-    geoms = list(feature.geometries())
-
-    if target_projection != feature.crs:
-        # Transform the geometries from the feature's CRS into the
-        # desired projection.
-        geoms = [target_projection.project_geometry(geom, feature.crs)
-                 for geom in geoms]
-
-    if clip_geom:
-        # Clip the geometries based on the extent of the map (because mpl3d
-        # can't do it for us)
-        geoms = [geom.intersection(clip_geom) for geom in geoms]
-
-    # Convert the geometries to paths so we can use them in matplotlib.
-    paths = concat(geos_to_path(geom) for geom in geoms)
-
-    # Bug: mpl3d can't handle edgecolor='face'
-    kwargs = feature.kwargs
-    if kwargs.get('edgecolor') == 'face':
-        kwargs['edgecolor'] = 'k'
-        kwargs['facecolor'] = 'grey'
-    polys = concat(path.to_polygons(closed_only=False) for path in paths)
-
-    if kwargs.get('facecolor', 'none') == 'none':
-        lc = LineCollection(polys, **kwargs)
-    else:
-        lc = PolyCollection(polys, closed=False,**kwargs)
-    ax3d.add_collection3d(lc, zs=zs)
+    def linear_trend(x, y):
+        pf = np.polyfit(x, y, 1)
+        return xr.DataArray(pf[0])
+    def intercepts(x, y):
+        pf = np.polyfit(x, y, 1)
+        return xr.DataArray(pf[1])
+    
+    tm = data.time
+    lt = data.lat
+    ln = data.lon
+    # timevals = xr.DataArray(np.arange(1,len(tm)+1,1),
+    #                     coords=[tm],
+    #                     dims=["time"])
+    timevals = data['time.year']+(data.time.dt.dayofyear/365)
+    timevals = timevals.expand_dims(lat=lt,lon=ln)
+    timevals = timevals.transpose("time","lat","lon")
+    
+    trends = xr.apply_ufunc(linear_trend,
+                            timevals,data,
+                            vectorize=True,
+                            input_core_dims=[["time"],["time"]])
+    intcpts = xr.apply_ufunc(intercepts,
+                             timevals,data,
+                             vectorize=True,
+                             input_core_dims=[["time"],["time"]])
+    
+    predicted_vals = (intcpts + trends*timevals).transpose("time","lat","lon")
+    detrended_data = data - predicted_vals
+    return detrended_data, predicted_vals
