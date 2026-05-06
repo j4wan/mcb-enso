@@ -175,7 +175,9 @@ s_to_days = 86400 #s/day
 
 
 ## READ IN CONTROL SMYLE-FOSI HISTORICAL SIMULATIONS
-data_dir='/_data/SMYLE-FOSI/regrid/'
+# SMYLE input data can be found at the SMYLE archive on NSF-NCAR HPC Derecho
+# /glade/campaign/cesm/development/espwg/SMYLE/archive/
+data_dir='/_data/SMYLE-FOSI/regrid/' # This is just a placeholder
 # Read in potential temperature and select surface layer only to reduce file sice
 ocn_temp_hist_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(data_dir+'r288x192.g.e22.GOMIPECOIAF_JRA-1p4-2018.TL319_g17.SMYLE.005.pop.h.TEMP.030601-036812.nc'))).TEMP.isel(z_t=0)
 # Reassign time values to be between 1958-2020 (Yeager et al., 2022)
