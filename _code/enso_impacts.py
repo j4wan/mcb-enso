@@ -106,18 +106,6 @@ elif sensitivity_opt=='n':
         mcb_sims[key] = mcb_members 
 
 
-# Get list of control climatology ensemble members
-clim_files =  glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/TS/b.e21.BSMYLE.f09_g17.1970-'+month_init+'*.nc')
-clim_members = []
-for i in clim_files:
-    start = i.find('f09_g17.1970-'+month_init+'.') + len('f09_g17.1970-'+month_init+'.')
-    tmp = i[start:start+3]
-    if tmp not in clim_members:
-        clim_members.append(tmp)
-clim_members = sorted(clim_members)
-print(clim_members) 
-
-
 # # Get interesction of control and MCB ensemble members so we only keep members that are in both
 intersect_members = ctrl_members[0:len(mcb_members)]
 
