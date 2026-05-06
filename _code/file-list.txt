@@ -6,3 +6,4 @@ smyle_aus_mcb.py : script to analyze and compare SMYLE-MCB La Niña experiment t
 eindex_calc.py: script to calculate E-index and C-index from SST EOFs for C&M replication analysis. Produces Fig S19.
 spmm_npmm_analysis.py: script to calculate SPMM and NPMM indices from historical SMYLE-FOSI SSTs. Produces Fig S15.
 ocn_heat_budget.py: script to compare net surface heat flux anomaly and upper ocean heat content for SMYLE/MCB simulations. Produces Fig S12. 
+make_drift_climatology.py: script to compute climatology to correct for model drift during SMYLE initialization.
