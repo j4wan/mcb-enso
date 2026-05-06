@@ -852,8 +852,13 @@ plt.tight_layout();
 
 #%% CALCULATE POP WEIGHTED T AND P ANOMALIES (for Table S2)
 ## Read in pop data
-# Read in regridded population data (as used in Wan et al., 2024)
+# Download raw data from: 
+# Center For International Earth Science Information Network-CIESIN-Columbia University. (2017). 
+# Gridded Population of the World, Version 4 (GPWv4): Population Density, Revision 11
+# (Version 4.11) [Data set]. Palisades, NY: NASA Socioeconomic Data and Applications Center (SEDAC).
+#  https://doi.org/10.7927/H49C6VHW 
 ## 2010 ##
+# This is just a placeholder. You must download and regrid the data to the target grid.
 wd = '/_data/pop_data/gpw-v4-population-count-rev11_totpop_30_min_nc/'
 regrid_pop_count = xr.open_dataset(wd+'gpw-v4-population-count-rev11_totpop_192x288.nc')
 pop_count = regrid_pop_count.sel(time=2015).pop_count
