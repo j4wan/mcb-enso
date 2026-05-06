@@ -216,7 +216,7 @@ for sim in sim_keys:
     s_to_days = 86400 #s/day
 
     ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
-    atm_monthly_drift_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_drift_clim.nc')[0]))
+    atm_monthly_drift_clim_xr = fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_drift_clim_v3.nc')[0]))
 
     ## READ IN CONTROL SIMULATION & PRE-PROCESS
     # ATM
