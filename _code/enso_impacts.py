@@ -121,12 +121,12 @@ s_to_days = 86400 #s/day
 
 ## READ IN CONTROL SMYLE HISTORICAL SIMULATIONS
 # Read in each ensemble member as a discontinuous time series by concatenating overlapping periods
-atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*TS_PRECT_PS_concat.nc')[0])))
+atm_monthly_ctrl_clim_xr = fun.dateshift_netCDF(fun.reorient_netCDF(xr.open_dataset(glob.glob('/_data/SMYLE_clim/BSMYLE.1970-2019-'+month_init+'/atm_tseries/processed/*atm_drift_clim.v3.nc')[0])))
 
 
-## COMPUTE LONG TERM STANDARD DEVIATION AND MONTHLY CLIMATOLOGY MEAN FROM 1970-2014
+## COMPUTE LONG TERM STANDARD DEVIATION AND MONTHLY CLIMATOLOGY MEAN
 # Subset time from 1970-2014
-hist_ext = atm_monthly_ctrl_clim_xr.isel(time=atm_monthly_ctrl_clim_xr['time.year']<2015).isel(member=slice(0,len(intersect_members)))[['TS','PRECT']]
+hist_ext = atm_monthly_ctrl_clim_xr.isel(member=slice(0,len(intersect_members)))[['TS','PRECT']]
 # Calculate monthly climatological mean
 hist_clim_ens_mean = hist_ext.mean(dim=('member')).groupby('time.month').mean()
 # Calculate standard deviation
