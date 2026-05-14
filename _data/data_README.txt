@@ -1,26 +1,18 @@
 Data README
-You will need to populate _data/ with associated data files available from NCAR’s campaign storage system (accessible from Casper).
+You will need to populate _data/ with associated data files available from NCAR GDEX.
 MCB experiments:
-/glade/campaign/cesm/development/espwg/SMYLE-MCB/timeseries
+Wan, J. S., Fasullo, J. T., Rosenbloom, N. A., Chen, C. C., Ricke, K. (2026) CESM2 SMYLE-MCB [Dataset]. NSF National Center for Atmospheric Research. [placeholder]. Accessed dd mmm yyyy.
 SMYLE-AUFIRE experiments:
-/glade/campaign/cesm/development/espwg/SMYLE-AUFIRE/archive
+Fasullo, J. T., Rosenbloom, N. A., and Buchholz, R. R. (2023). CESM2 Initialized 2019/20 Australian Wildfire Simulations [Dataset]. NSF National Center for Atmospheric Research. https://doi.org/10.5065/w4v3-kr46. Accessed 14 May 2026.
 SMYLE control and historical experiments:
-/glade/campaign/cesm/development/espwg/SMYLE/archive
+Yeager, S. G., Richter, J. H., and Pegion, K. V. (2022). CESM2 SMYLE [Dataset]. NSF National Center for Atmospheric Research. https://doi.org/10.26024/pwma-re41. Accessed 14 May 2026.
 
-Sample data files to demo the code have been provided. For CESM2 output, select variables from 1 ensemble member have been uploaded.
-Note that due to storage limitations, no ocean output, wind (U and V) variables, historical climatologies, or georeferenced country level  anomalies have been provided but they are available upon request (Correspondence to Jessica Wan; j4wan@ucsd.edu).
+Small data files used in the analysis that are not included in the above repositories have been included here.
 
 Contents:
-sesp_mask_CESM2_0.9x1.25_v3.nc : example MCB seeding mask.
-/enso_regions: 
-  djf_major_nino_regions_05_0.1_sigma_v2.nc: netcdf defining 0.1 sigma wet/dry and cool/warm regions for major El Niño events from SMYLE   output.
+/mask_CESM:
+sesp_mask_CESM2_0.9x1.25_v3.nc : example MCB El Niño seeding mask.
+sesp_mask_CESM2_0.9x1.25_v19.nc : AUFIRE MCB seeding mask.
+
 /LENS2:
   CESM2 LENS2 historical ensemble standard deviation netcdfs for surface temperature (*TS*) and precipitation (*PRECT*) from 1970-2014.
-/MCB:
-  /b.e21.BSMYLE.f09_g17.MCB_2015-05_06-02.2015-05.101: CESM2 atm output for 1 ensemble member of Full effort MCB during 2015/16 El Niño.
-  /b.e21.BSMYLE.f09_g17.MCB.2019-08.001: CESM2 atm output for 1 ensemble member of MCB during 2019/20 La Niña.
-/realtime:
-  /b.e21.BSMYLE.f09_g17.2015-05.001: CESM2 atm output for 1 ensemble member of no MCB (control) during 2015/16 El Niño.
-/SMYLE-AUFIRE:
-  /b.e21.BSMYLE-AUFIRE.f09_g17.2019-08.201: CESM2 atm output for 1 ensemble member of the AUS wildfires during the 2019/20 La Niña (see     Yeager et al., 2022)
-  
