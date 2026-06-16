@@ -1,7 +1,7 @@
 Data README
 You will need to populate _data/ with associated data files available from NCAR GDEX.
 MCB experiments:
-Wan, J. S., J. T. Fasullo, N. A. Rosenbloom, C. Chen, and K. Ricke. 2026. CESM2 SMYLE MCB [Dataset]. NSF National Center for Atmospheric Research. https://gdex.ucar.edu/datasets/d651084/. Accessed† dd mmm yyyy.
+Wan, J. S., J. T. Fasullo, N. A. Rosenbloom, C. Chen, and K. Ricke. 2026. CESM2 SMYLE MCB [Dataset]. NSF National Center for Atmospheric Research. https://doi.org/10.5065/DGNA-PJ49. Accessed† dd mmm yyyy.
 SMYLE-AUFIRE experiments:
 Fasullo, J. T., Rosenbloom, N. A., and Buchholz, R. R. (2023). CESM2 Initialized 2019/20 Australian Wildfire Simulations [Dataset]. NSF National Center for Atmospheric Research. https://doi.org/10.5065/w4v3-kr46. Accessed† dd mmm yyyy.
 SMYLE control and historical experiments:
